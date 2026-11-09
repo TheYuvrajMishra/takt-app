@@ -14,7 +14,7 @@ import type {
 } from '../types';
 import type { CategoryColorName } from '../theme/tokens';
 import { DEFAULT_DURATION_MIN, DEFAULT_SETTINGS } from '../types';
-import { dateKey } from '../lib/core';
+import { dateKey, defaultDoNotNudgeFor } from '../lib/core';
 import * as db from '../lib/db';
 
 // ---------------------------------------------------------------------------
@@ -619,21 +619,28 @@ export const useStore = create<TaktState>()((set, get) => {
     addBlock: async (input, date, scope) => {
       pushUndo();
       const weekday = new Date(`${date}T00:00:00`).getDay();
+      // "Do not nudge" defaults: an explicit doNotNudge on the input wins;
+      // otherwise the global default or the block's category decides.
+      const settings = get().settings;
+      const doNotNudge =
+        input.doNotNudge ?? defaultDoNotNudgeFor(settings, input.categoryId);
       if (scope === 'today') {
         const blocks = get().getBlocksForDate(date);
         const block: Block = {
           ...input,
           id: input.id ?? db.newId(),
           durationMin: input.durationMin || DEFAULT_DURATION_MIN,
+          doNotNudge,
         };
         await commitOverride(date, [...blocks, block]);
-        emitToast('Added for today only.');
+        emitToast(doNotNudge ? 'Added for today only — won\'t nudge.' : 'Added for today only.');
       } else {
         const template = await ensureTemplate(date);
         const templateBlock: TemplateBlock = {
           ...input,
           id: input.id ?? db.newId(),
           durationMin: input.durationMin || DEFAULT_DURATION_MIN,
+          doNotNudge,
           weekdays: scope === 'onwards' ? [0, 1, 2, 3, 4, 5, 6] : [weekday],
         };
         const next: RoutineTemplate = {
@@ -645,9 +652,13 @@ export const useStore = create<TaktState>()((set, get) => {
         };
         await commitTemplate(next);
         emitToast(
-          scope === 'onwards'
-            ? 'Added from today onwards.'
-            : 'Added for this weekday onwards.',
+          doNotNudge
+            ? scope === 'onwards'
+              ? 'Added from today onwards — won\'t nudge.'
+              : 'Added for this weekday onwards — won\'t nudge.'
+            : scope === 'onwards'
+              ? 'Added from today onwards.'
+              : 'Added for this weekday onwards.',
         );
       }
       notifyAfterChange();
@@ -979,9 +990,24 @@ export const useStore = create<TaktState>()((set, get) => {
 
     updateSettings: async (patch) => {
       pushUndo();
-      const next: Settings = { ...get().settings, ...patch };
-      await db.saveSettings(next);
+      const prev = get().settings;
+      const next: Settings = { ...prev, ...patch };
+      // Optimistic: state lands synchronously, so rapid toggles each read
+      // fresh state (a slow sqlite write must never lose a tap). If the
+      // write fails, revert to the previous settings and say so.
       set({ settings: next });
+      try {
+        await db.saveSettings(next);
+      } catch {
+        // Only revert if nothing newer landed meanwhile: a later
+        // toggle's save already persisted this change too (its `next`
+        // merged it in), so reverting to this call's `prev` would wipe
+        // the later tap.
+        if (get().settings === next) {
+          set({ settings: prev });
+          emitToast('Could not save that setting.');
+        }
+      }
       notifyAfterChange();
     },
 

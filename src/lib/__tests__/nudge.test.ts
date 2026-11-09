@@ -59,6 +59,8 @@ const TEST_SETTINGS: Settings = {
   haptics: true,
   reduceMotion: false,
   largeText: false,
+  defaultDoNotNudge: false,
+  doNotNudgeCategoryIds: [],
 };
 
 function block(

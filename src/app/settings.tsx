@@ -1,14 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { colors, fonts, hairline, radii, spacing } from '../theme/tokens';
 import { DEFAULT_CATEGORIES, type Settings } from '../types';
 import { CategoryIcon } from '../components/CategoryIcon';
+import { mergeBackupSettings } from '../lib/backup';
 import { useStore } from '../store/useStore';
 
-// Settings live in the zustand store (persisted via sqlite). The "Do not
-// nudge" defaults below are still local state: there is no store field for
-// them yet, so they do not survive a restart.
+// Settings live in the zustand store (persisted via sqlite), including the
+// "Do not nudge" defaults below.
 
 const BACKUP_FILENAME = 'takt-backup.json';
 
@@ -79,6 +79,8 @@ function ToggleRow({
         onValueChange={onChange}
         trackColor={{ false: 'rgba(10,10,10,0.15)', true: colors.carbon }}
         thumbColor={colors.paper}
+        accessibilityRole="switch"
+        accessibilityLabel={label}
       />
     </View>
   );
@@ -88,14 +90,22 @@ export default function SettingsScreen() {
   const router = useRouter();
   const settings = useStore((s) => s.settings);
   const updateSettings = useStore((s) => s.updateSettings);
-  const [dndDefault, setDndDefault] = useState(false);
-  const [dndCats, setDndCats] = useState<string[]>(['cat-sleep']);
+  const storeCategories = useStore((s) => s.categories);
+  const lastToast = useStore((s) => s.lastToast);
   const [toast, setToast] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3500);
   };
+
+  // Store toasts surface here too — otherwise a failed settings save
+  // reverts the switch with no correction to the optimistic toast.
+  useEffect(() => {
+    if (!lastToast) return;
+    showToast(lastToast);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastToast]);
 
   const patch = (p: Partial<Settings>) => {
     void updateSettings(p);
@@ -131,7 +141,7 @@ export default function SettingsScreen() {
       };
       if (!fs.documentDirectory) throw new Error('no document directory');
       const payload = JSON.stringify(
-        { app: 'Takt', version: '1.0.0', exportedAt: new Date().toISOString(), settings, dndDefault, dndCats },
+        { app: 'Takt', version: '1.0.0', exportedAt: new Date().toISOString(), settings },
         null,
         2,
       );
@@ -162,11 +172,22 @@ export default function SettingsScreen() {
         return;
       }
       const raw = await fs.readAsStringAsync(uri);
-      const parsed = JSON.parse(raw) as { settings?: Settings; dndDefault?: boolean; dndCats?: string[] };
-      if (parsed.settings) void updateSettings(parsed.settings);
-      if (typeof parsed.dndDefault === 'boolean') setDndDefault(parsed.dndDefault);
-      if (Array.isArray(parsed.dndCats)) setDndCats(parsed.dndCats);
-      showToast('Backup restored.');
+      const parsed = JSON.parse(raw) as {
+        settings?: Settings;
+        dndDefault?: boolean;
+        dndCats?: string[];
+      };
+      const knownIds = [
+        ...storeCategories.map((c) => c.id),
+        ...DEFAULT_CATEGORIES.map((c) => c.id),
+      ];
+      const restored = mergeBackupSettings(parsed, [...new Set(knownIds)]);
+      if (Object.keys(restored).length > 0) {
+        void updateSettings(restored);
+        showToast('Backup restored.');
+      } else {
+        showToast('Backup had no settings to restore.');
+      }
     } catch {
       showToast('Restore failed — could not read the backup file.');
     }
@@ -180,8 +201,29 @@ export default function SettingsScreen() {
     }
   };
 
-  const toggleDndCat = (id: string) =>
-    setDndCats((prev) => (prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id]));
+  // Read fresh state per tap (not the render closure): with the optimistic
+  // updateSettings, each tap's read sees the previous tap's write, so
+  // rapid double-taps can't lose an update.
+  const toggleDndCat = (id: string) => {
+    const current = useStore.getState().settings.doNotNudgeCategoryIds;
+    const next = current.includes(id)
+      ? current.filter((c) => c !== id)
+      : [...current, id];
+    patch({ doNotNudgeCategoryIds: next });
+    const cat =
+      storeCategories.find((c) => c.id === id) ??
+      DEFAULT_CATEGORIES.find((c) => c.id === id);
+    showToast(
+      next.includes(id)
+        ? `New ${cat?.name ?? 'category'} blocks won't nudge.`
+        : `New ${cat?.name ?? 'category'} blocks will nudge again.`,
+    );
+  };
+
+  const toggleDndDefault = (v: boolean) => {
+    patch({ defaultDoNotNudge: v });
+    showToast(v ? "New blocks won't nudge." : 'New blocks will nudge again.');
+  };
 
   return (
     <ScrollView style={styles.root} contentContainerStyle={styles.content}>
@@ -240,11 +282,14 @@ export default function SettingsScreen() {
         <ToggleRow
           label="New blocks do not nudge by default"
           hint="Applies to blocks you add from now on."
-          value={dndDefault}
-          onChange={setDndDefault}
+          value={settings.defaultDoNotNudge}
+          onChange={toggleDndDefault}
         />
-        {DEFAULT_CATEGORIES.map((cat) => (
-          <View key={cat.id}>
+        {(storeCategories.length > 0 ? storeCategories : DEFAULT_CATEGORIES).map((cat) => (
+          <View
+            key={cat.id}
+            style={settings.defaultDoNotNudge ? styles.dimmedRow : undefined}
+          >
             <View style={styles.divider} />
             <View style={styles.row}>
               <View style={styles.catCell}>
@@ -252,14 +297,22 @@ export default function SettingsScreen() {
                 <Text style={styles.rowLabel}>{cat.name}</Text>
               </View>
               <Switch
-                value={dndCats.includes(cat.id)}
+                value={settings.doNotNudgeCategoryIds.includes(cat.id)}
                 onValueChange={() => toggleDndCat(cat.id)}
+                disabled={settings.defaultDoNotNudge}
                 trackColor={{ false: 'rgba(10,10,10,0.15)', true: colors.carbon }}
                 thumbColor={colors.paper}
+                accessibilityRole="switch"
+                accessibilityLabel={`Do not nudge new ${cat.name} blocks`}
               />
             </View>
           </View>
         ))}
+        <Text style={styles.hint}>
+          {settings.defaultDoNotNudge
+            ? 'The global default is on, so every new block is silenced — the categories below are paused.'
+            : 'Existing blocks are unaffected — this only applies to blocks you add from now on.'}
+        </Text>
       </View>
 
       <Text style={styles.sectionTitle}>Experience</Text>
@@ -339,6 +392,7 @@ const styles = StyleSheet.create({
   stepButtonText: { fontFamily: fonts.semibold, fontSize: 18, color: colors.carbon },
   stepValue: { fontFamily: fonts.semibold, fontSize: 16, color: colors.carbon, minWidth: 64, textAlign: 'center' },
   catCell: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  dimmedRow: { opacity: 0.45 },
   primaryButton: { backgroundColor: colors.carbon, borderRadius: radii.pill, paddingVertical: 16, alignItems: 'center', marginVertical: spacing.sm },
   primaryButtonText: { fontFamily: fonts.semibold, fontSize: 16, color: colors.paper },
   actionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14 },

@@ -509,7 +509,25 @@ export async function getSettings(): Promise<Settings> {
     SETTINGS_KEY,
   );
   if (!row) return { ...DEFAULT_SETTINGS };
-  return { ...DEFAULT_SETTINGS, ...(JSON.parse(row.value) as Partial<Settings>) };
+  const merged: Settings = {
+    ...DEFAULT_SETTINGS,
+    ...(JSON.parse(row.value) as Partial<Settings>),
+  };
+  // A corrupt row (hand-edited sqlite, bad restore) must never propagate
+  // a non-boolean / non-array into the store — coerce to the defaults.
+  if (typeof merged.defaultDoNotNudge !== 'boolean') {
+    merged.defaultDoNotNudge = DEFAULT_SETTINGS.defaultDoNotNudge;
+  }
+  if (!Array.isArray(merged.doNotNudgeCategoryIds)) {
+    merged.doNotNudgeCategoryIds = [
+      ...DEFAULT_SETTINGS.doNotNudgeCategoryIds,
+    ];
+  } else {
+    merged.doNotNudgeCategoryIds = merged.doNotNudgeCategoryIds.filter(
+      (id): id is string => typeof id === 'string',
+    );
+  }
+  return merged;
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {

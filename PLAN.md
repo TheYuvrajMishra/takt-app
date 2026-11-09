@@ -20,9 +20,8 @@ App: routine app that nudges you until you do the thing. Name **Takt**, package 
 
 ## Phase 10 — iteration cycles (coordinator, 2026-11-10 ~01:40 IST)
 - Cycle 1 (DONE, awaiting final CI): weekday-split re-id fix — edited weekday keeps the block id, remainder re-id + completion migration in one sqlite transaction, scoped-edit/override sync, batched undo for drag/quick-edit/swap/multi-delete/create-with-shift, resolveEditedId deleted, stale-id split-chain resolution with splitFromId lineage. Tests 44 → 65, tsc clean, expo android export bundles.
-- Cycle 2 (next): Settings "Do not nudge" defaults persist (store fields + addBlock applies them).
-- Cycle 3 (was: atomic multi-block undo — DONE inside cycle 1 via begin/endUndoBatch; re-pick): TBD from remaining KNOWN_ISSUES / critic findings.
-- Remaining candidates: nudge reliability hardening + tests; accessibility + performance pass; home-screen shortcut / "now" widget if feasible; weekday-delete completion orphan in stats (open, needs a decision).
+- Cycle 2 (DONE, awaiting CI): Settings "Do not nudge" defaults persist (store fields + addBlock applies them; onboarding first task exempt; optimistic updateSettings; per-block nudge controls in Today + Calendar sheets; silenced creation toasts). Round-2 critics (QA 7/10, UX 7/10) flagged the quick-sheet switch going stale on category change — fixed with a dirty flag + shared defaultDoNotNudgeFor() helper; backup merge now sanitizes corrupt lists/defaults and never wipes the list on all-stale ids; getSettings coerces corrupt rows. Round 3 (final per cap) fixed the remaining UX items: Settings subscribes to lastToast (dead failure toast), revert-only-if-still-current (D3), compact "Won't nudge" tag (D4), hollow-dot markers on BlockChip/BlockCard + text in Today rows (D5). Tests 65 → 89, tsc clean, expo export OK. Committing now.
+- Cycle 3 (next): TBD from remaining KNOWN_ISSUES / critic findings — candidates: nudge reliability hardening + tests; accessibility + performance pass; home-screen shortcut / "now" widget if feasible; weekday-delete completion orphan in stats (open, needs a decision).
 
 ## File map (ownership — do not cross-write)
 - `src/theme/*` — tokens, fonts, grain, hatch

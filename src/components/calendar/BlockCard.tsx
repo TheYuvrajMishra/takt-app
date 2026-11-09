@@ -150,9 +150,17 @@ export function BlockCard(props: BlockCardProps) {
           animatedStyle,
         ]}
       >
-        <Text style={[styles.title, { color: fg }]} numberOfLines={compact ? 1 : 2}>
-          {block.title}
-        </Text>
+        <View style={styles.titleRow}>
+          <Text
+            style={[styles.title, { color: fg, flex: 1 }]}
+            numberOfLines={compact ? 1 : 2}
+          >
+            {block.title}
+          </Text>
+          {block.doNotNudge ? (
+            <View style={[styles.muteDot, { borderColor: fg }]} />
+          ) : null}
+        </View>
         {!compact && (
           <Text style={[styles.meta, { color: fg }]} numberOfLines={1}>
             {formatRange(block)} · {category.name}
@@ -180,6 +188,17 @@ const styles = StyleSheet.create({
     fontFamily: fonts.semibold,
     fontSize: 13,
     lineHeight: 16,
+  },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  // Hollow dot = this block won't nudge (muted). Border follows the
+  // category text colour so it stays visible on dark cards.
+  muteDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    opacity: 0.55,
+    flexShrink: 0,
   },
   meta: {
     fontFamily: fonts.regular,

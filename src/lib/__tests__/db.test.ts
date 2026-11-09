@@ -4,13 +4,17 @@
 // with no-ops and can never validate these.
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-const calls = vi.hoisted(() => ({ run: [] as unknown[][], tx: 0 }));
+const calls = vi.hoisted(() => ({
+  run: [] as unknown[][],
+  tx: 0,
+  settingsRow: null as unknown,
+}));
 
 vi.mock('expo-sqlite', () => ({
   openDatabaseAsync: vi.fn(async () => ({
     execAsync: vi.fn(async () => undefined),
     getAllAsync: vi.fn(async () => []),
-    getFirstAsync: vi.fn(async () => null),
+    getFirstAsync: vi.fn(async () => calls.settingsRow),
     runAsync: vi.fn(async (...args: unknown[]) => {
       calls.run.push(args);
       return { changes: 1, lastInsertRowId: 0 };
@@ -22,12 +26,13 @@ vi.mock('expo-sqlite', () => ({
   })),
 }));
 
-import { saveTemplateWithCompletionRekey, rekeyCompletions } from '../db';
-import type { RoutineTemplate } from '../../types';
+import { getSettings, saveTemplateWithCompletionRekey, rekeyCompletions } from '../db';
+import { DEFAULT_SETTINGS, type RoutineTemplate } from '../../types';
 
 beforeEach(() => {
   calls.run.length = 0;
   calls.tx = 0;
+  calls.settingsRow = null;
 });
 
 const template: RoutineTemplate = {
@@ -92,5 +97,47 @@ describe('rekeyCompletions', () => {
     await rekeyCompletions([]);
     expect(calls.tx).toBe(0);
     expect(calls.run).toHaveLength(0);
+  });
+});
+
+describe('getSettings', () => {
+  it('returns full defaults when no row is stored', async () => {
+    calls.settingsRow = null;
+    expect(await getSettings()).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it('fills new fields with defaults for old-schema rows', async () => {
+    calls.settingsRow = {
+      value: JSON.stringify({ nudgeIntervalMin: 5, maxNudgesPerBlock: 3 }),
+    };
+    const s = await getSettings();
+    expect(s.nudgeIntervalMin).toBe(5);
+    expect(s.maxNudgesPerBlock).toBe(3);
+    expect(s.defaultDoNotNudge).toBe(false);
+    expect(s.doNotNudgeCategoryIds).toEqual(['cat-sleep']);
+  });
+
+  it('loads stored values for the new fields', async () => {
+    calls.settingsRow = {
+      value: JSON.stringify({
+        defaultDoNotNudge: true,
+        doNotNudgeCategoryIds: ['cat-gaming'],
+      }),
+    };
+    const s = await getSettings();
+    expect(s.defaultDoNotNudge).toBe(true);
+    expect(s.doNotNudgeCategoryIds).toEqual(['cat-gaming']);
+  });
+
+  it('coerces corrupt DND values to defaults instead of propagating them', async () => {
+    calls.settingsRow = {
+      value: JSON.stringify({
+        defaultDoNotNudge: 'yes',
+        doNotNudgeCategoryIds: 'cat-job',
+      }),
+    };
+    const s = await getSettings();
+    expect(s.defaultDoNotNudge).toBe(false);
+    expect(s.doNotNudgeCategoryIds).toEqual(['cat-sleep']);
   });
 });

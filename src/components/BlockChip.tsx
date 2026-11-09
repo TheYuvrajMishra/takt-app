@@ -42,6 +42,14 @@ export function BlockChip({ block, category, status, isNow, onPress, style }: Bl
           <CategoryIcon icon={category.icon} color={category.color} size={20} />
         ) : null}
         <Text style={[styles.time, isMissed && styles.missedText]}>{minToTime(block.startMin)}</Text>
+        {block.doNotNudge ? (
+          <View
+            style={[
+              styles.muteDot,
+              { borderColor: isMissed ? colors.paper : colors.carbon },
+            ]}
+          />
+        ) : null}
       </View>
       <Text
         style={[styles.title, isMissed && styles.missedText]}
@@ -71,6 +79,16 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.85 },
   hatch: { borderRadius: 20 },
   iconRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
+  // Hollow dot = this block won't nudge (muted). Hollow, not solid, so it
+  // reads as "off" against the solid status colours. The sheet explains it.
+  muteDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    opacity: 0.55,
+    marginLeft: 'auto',
+  },
   time: { fontFamily: fonts.semibold, fontSize: 13, color: colors.carbon },
   title: { fontFamily: fonts.medium, fontSize: 13, lineHeight: 17, color: colors.carbon },
   duration: { fontFamily: fonts.regular, fontSize: 11, color: colors.carbon, opacity: 0.6, marginTop: 4 },

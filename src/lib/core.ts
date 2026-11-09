@@ -1,4 +1,4 @@
-import type { Block, CompletionEntry } from '../types';
+import type { Block, CompletionEntry, Settings } from '../types';
 
 /** minutes from midnight -> "07:30" */
 export function minToTime(min: number): string {
@@ -82,4 +82,17 @@ export function isInQuietHours(min: number, start: string, end: string): boolean
   const e = toMin(end);
   if (s <= e) return min >= s && min < e;
   return min >= s || min < e; // overnight range
+}
+
+/** Whether a NEW block in this category is silenced by the Do-not-nudge
+ * defaults (global default, or the category's own default). Explicit
+ * per-block flags win over this — it only decides the default. */
+export function defaultDoNotNudgeFor(
+  settings: Settings,
+  categoryId: string,
+): boolean {
+  return (
+    settings.defaultDoNotNudge ||
+    settings.doNotNudgeCategoryIds.includes(categoryId)
+  );
 }

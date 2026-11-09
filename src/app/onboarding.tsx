@@ -522,6 +522,9 @@ export default function OnboardingScreen({ onDone }: { onDone?: () => void }) {
                       title: cat?.name ?? 'First task',
                       startMin: firstTaskStart,
                       durationMin: 30,
+                      // The first task is the "Meet the nudge" demo: it
+                      // always nudges, whatever the Do-not-nudge defaults say.
+                      doNotNudge: false,
                     },
                     dateKey(tomorrow),
                     'today',

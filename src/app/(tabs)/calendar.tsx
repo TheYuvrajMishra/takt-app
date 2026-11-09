@@ -16,6 +16,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   useWindowDimensions,
@@ -34,7 +35,7 @@ import {
   type Scope,
 } from '../../types';
 import { categoryColorHex, colors, faintText, fonts, hairline, radii, spacing } from '../../theme/tokens';
-import { dateKey, earliestEmptySlot, minToTime, overlaps, snap5 } from '../../lib/core';
+import { dateKey, defaultDoNotNudgeFor, earliestEmptySlot, minToTime, overlaps, snap5 } from '../../lib/core';
 import {
   addDays,
   autoShiftBlocks,
@@ -146,6 +147,11 @@ export default function CalendarScreen() {
   const [toast, setToast] = useState<string | null>(null);
   const [quick, setQuick] = useState<QuickSheet | null>(null);
   const [qcTitle, setQcTitle] = useState('');
+  const [qcDoNotNudge, setQcDoNotNudge] = useState(false);
+  // Whether the user manually flipped the nudge switch in the open sheet.
+  // Until they do, the switch follows the Do-not-nudge defaults for the
+  // selected category (create mode only).
+  const [qcNudgeDirty, setQcNudgeDirty] = useState(false);
   const [qcCategoryId, setQcCategoryId] = useState(DEFAULT_CATEGORIES[0].id);
   const [qcDuration, setQcDuration] = useState(DEFAULT_DURATION_MIN);
   // Pending change: the gesture is done, the scope sheet is asking which
@@ -468,6 +474,14 @@ export default function CalendarScreen() {
     setQcTitle('');
     setQcCategoryId(DEFAULT_CATEGORIES[0].id);
     setQcDuration(DEFAULT_DURATION_MIN);
+    // New blocks start silenced when a Do-not-nudge default covers them.
+    setQcDoNotNudge(
+      defaultDoNotNudgeFor(
+        useStore.getState().settings,
+        DEFAULT_CATEGORIES[0].id,
+      ),
+    );
+    setQcNudgeDirty(false);
     setQuick({ mode: 'create', date, startMin });
   }, []);
 
@@ -475,8 +489,27 @@ export default function CalendarScreen() {
     setQcTitle(block.title);
     setQcCategoryId(block.categoryId);
     setQcDuration(block.durationMin);
+    setQcDoNotNudge(block.doNotNudge ?? false);
+    setQcNudgeDirty(false);
     setQuick({ mode: 'edit', date, block });
   }, []);
+
+  // Picking a category in create mode re-derives the nudge switch from the
+  // defaults for that category — unless the user already flipped it by
+  // hand, in which case their explicit choice stands. In edit mode the
+  // switch keeps the block's own flag (re-categorising never re-evaluates
+  // the defaults).
+  const selectQcCategory = useCallback(
+    (categoryId: string) => {
+      setQcCategoryId(categoryId);
+      if (quick?.mode === 'create' && !qcNudgeDirty) {
+        setQcDoNotNudge(
+          defaultDoNotNudgeFor(useStore.getState().settings, categoryId),
+        );
+      }
+    },
+    [quick, qcNudgeDirty],
+  );
 
   const handleTapBlock = useCallback(
     (id: string) => {
@@ -516,6 +549,8 @@ export default function CalendarScreen() {
         title,
         startMin: quick.startMin,
         durationMin: qcDuration,
+        // Explicit: the sheet switch wins over the Do-not-nudge defaults.
+        doNotNudge: qcDoNotNudge,
       };
       const list = getBlocksForDate(quick.date);
       const merged = autoShiftBlocks(list, block);
@@ -555,6 +590,7 @@ export default function CalendarScreen() {
       > = {};
       if (updated.categoryId !== orig.categoryId) patch.categoryId = updated.categoryId;
       if (updated.title !== orig.title) patch.title = updated.title;
+      if ((orig.doNotNudge ?? false) !== qcDoNotNudge) patch.doNotNudge = qcDoNotNudge;
       beginUndoBatch();
       try {
         if (Object.keys(patch).length > 0) {
@@ -575,7 +611,7 @@ export default function CalendarScreen() {
         endUndoBatch();
       }
     });
-  }, [quick, qcTitle, qcCategoryId, qcDuration, requestScope, applyCreated, patchBlock, resizeBlock, moveBlock, showToast, templates, dayOverrides, beginUndoBatch, endUndoBatch]);
+  }, [quick, qcTitle, qcCategoryId, qcDuration, qcDoNotNudge, requestScope, applyCreated, patchBlock, resizeBlock, moveBlock, showToast, templates, dayOverrides, beginUndoBatch, endUndoBatch]);
 
   const deleteQuickBlock = useCallback(() => {
     if (!quick || quick.mode !== 'edit') return;
@@ -586,6 +622,10 @@ export default function CalendarScreen() {
   }, [quick, requestScope, deleteBlock]);
 
   // ---- multi-select actions ------------------------------------------
+  // Duplicate preserves the original block as-is, including its explicit
+  // doNotNudge flag: a copy is that block again, so an explicit flag wins
+  // over the current defaults (same rule as addBlock). Paste drops the flag
+  // (ClipboardItem has none), so pasted blocks take the current defaults.
   const duplicateSelected = useCallback(() => {
     const ids = [...selected];
     if (ids.length === 0) return;
@@ -1109,7 +1149,7 @@ export default function CalendarScreen() {
                   return (
                     <Pressable
                       key={cat.id}
-                      onPress={() => setQcCategoryId(cat.id)}
+                      onPress={() => selectQcCategory(cat.id)}
                       style={[styles.catChip, active && styles.catChipActive]}
                     >
                       <View style={[styles.catDot, { backgroundColor: categoryColorHex[cat.color] }]} />
@@ -1135,6 +1175,20 @@ export default function CalendarScreen() {
                 <Pressable onPress={() => setQcDuration((v) => clamp(v + 5, 10, 240))} style={styles.stepper}>
                   <Text style={styles.stepperText}>+</Text>
                 </Pressable>
+              </View>
+              <View style={styles.nudgeRow}>
+                <Text style={styles.sheetLabel}>Nudge for this block</Text>
+                <Switch
+                  value={!qcDoNotNudge}
+                  onValueChange={(v) => {
+                    setQcNudgeDirty(true);
+                    setQcDoNotNudge(!v);
+                  }}
+                  trackColor={{ false: 'rgba(10,10,10,0.15)', true: colors.carbon }}
+                  thumbColor={colors.paper}
+                  accessibilityRole="switch"
+                  accessibilityLabel="Nudge for this block"
+                />
               </View>
               <Pressable onPress={saveQuick} style={styles.saveBtn}>
                 <Text style={styles.saveBtnText}>{quick?.mode === 'edit' ? 'Save changes' : 'Add block'}</Text>
@@ -1457,6 +1511,7 @@ const styles = StyleSheet.create({
   catChipText: { fontFamily: fonts.medium, fontSize: 13, color: colors.carbon },
   catChipTextActive: { color: colors.paper },
   durationRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  nudgeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 },
   durationChip: {
     borderRadius: radii.pill,
     borderWidth: 1,

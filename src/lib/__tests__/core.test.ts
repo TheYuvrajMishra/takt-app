@@ -1,9 +1,11 @@
 // Pure-logic tests for src/lib/core.ts.
 import { describe, expect, it } from 'vitest';
 import type { Block, CompletionEntry } from '../../types';
+import { DEFAULT_SETTINGS } from '../../types';
 import {
   blockEnd,
   dateKey,
+  defaultDoNotNudgeFor,
   disciplineScore,
   earliestEmptySlot,
   isInQuietHours,
@@ -138,5 +140,23 @@ describe('isInQuietHours', () => {
     expect(isInQuietHours(360, '22:00', '07:00')).toBe(true); // 06:00
     expect(isInQuietHours(420, '22:00', '07:00')).toBe(false); // 07:00
     expect(isInQuietHours(720, '22:00', '07:00')).toBe(false); // 12:00
+  });
+});
+
+describe('defaultDoNotNudgeFor', () => {
+  it('silences when the global default is on', () => {
+    const s = { ...DEFAULT_SETTINGS, defaultDoNotNudge: true };
+    expect(defaultDoNotNudgeFor(s, 'cat-job')).toBe(true);
+  });
+
+  it('silences when the category is in the default list', () => {
+    const s = { ...DEFAULT_SETTINGS, doNotNudgeCategoryIds: ['cat-sleep'] };
+    expect(defaultDoNotNudgeFor(s, 'cat-sleep')).toBe(true);
+    expect(defaultDoNotNudgeFor(s, 'cat-job')).toBe(false);
+  });
+
+  it('nudges when neither default covers the category', () => {
+    const s = { ...DEFAULT_SETTINGS };
+    expect(defaultDoNotNudgeFor(s, 'cat-job')).toBe(false);
   });
 });

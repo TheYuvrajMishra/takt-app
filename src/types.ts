@@ -77,6 +77,10 @@ export interface Settings {
   haptics: boolean;
   reduceMotion: boolean;
   largeText: boolean;
+  /** New blocks do not nudge by default. */
+  defaultDoNotNudge: boolean;
+  /** Categories whose new blocks do not nudge by default. */
+  doNotNudgeCategoryIds: string[];
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -89,6 +93,8 @@ export const DEFAULT_SETTINGS: Settings = {
   haptics: true,
   reduceMotion: false,
   largeText: false,
+  defaultDoNotNudge: false,
+  doNotNudgeCategoryIds: ['cat-sleep'],
 };
 
 export const DEFAULT_DURATION_MIN = 25;

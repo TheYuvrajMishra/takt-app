@@ -474,6 +474,9 @@ export default function TodayScreen() {
                 {sheetBlock.durationMin} min
               </Text>
               <Pill status={sheetStatus} />
+              {sheetBlock.doNotNudge ? (
+                <Text style={styles.sheetMetaTag}>Won't nudge</Text>
+              ) : null}
             </View>
 
             <BigButton
@@ -498,6 +501,12 @@ export default function TodayScreen() {
                   const idx = categories.findIndex((c) => c.id === sheetBlock.categoryId);
                   const nextCat = categories[(idx + 1) % categories.length];
                   void updateBlockToday(sheetBlock, { categoryId: nextCat.id });
+                }}
+              />
+              <SheetAction
+                label={sheetBlock.doNotNudge ? 'Turn nudges on' : 'Turn nudges off'}
+                onPress={() => {
+                  void updateBlockToday(sheetBlock, { doNotNudge: !sheetBlock.doNotNudge });
                 }}
               />
               <SheetAction
@@ -606,6 +615,7 @@ function BlockRow({
         </Text>
         <Text style={styles.rowMeta}>
           {minToTime(block.startMin)} – {minToTime(blockEnd(block))} · {block.durationMin} min
+          {block.doNotNudge ? " · Won't nudge" : ''}
         </Text>
       </View>
       <Pill status={status} />
@@ -709,6 +719,8 @@ const styles = StyleSheet.create({
   summaryButtonText: { fontFamily: fonts.semibold, fontSize: 15, color: colors.paper },
   sheetHead: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: spacing.md },
   sheetMeta: { fontFamily: fonts.medium, fontSize: 14, color: colors.carbon, flex: 1 },
+  // Compact tag beside the Pill: no flex, so it never squeezes the time.
+  sheetMetaTag: { fontFamily: fonts.medium, fontSize: 14, color: colors.carbon },
   sheetPrimary: { width: '100%' },
   actionGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: spacing.md },
   actionButton: {
