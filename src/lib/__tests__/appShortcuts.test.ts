@@ -8,6 +8,7 @@ import {
   addShortcutsMetaData,
   DRAWABLES,
   SHORTCUTS_XML,
+  STRINGS_XML,
 } from '../../../plugins/with-app-shortcuts';
 
 function launcherManifest() {
@@ -101,22 +102,42 @@ describe('SHORTCUTS_XML', () => {
     expect(SHORTCUTS_XML).toContain('android:targetClass="com.takt.app.MainActivity"');
   });
 
+  it('references @string labels (aapt rejects literal label strings)', () => {
+    for (const name of [
+      'shortcut_now_short',
+      'shortcut_now_long',
+      'shortcut_calendar_short',
+      'shortcut_calendar_long',
+      'shortcut_stats_short',
+      'shortcut_stats_long',
+    ]) {
+      expect(SHORTCUTS_XML).toContain(`@string/${name}`);
+      expect(STRINGS_XML).toContain(`name="${name}"`);
+    }
+  });
+
   it('keeps short labels within 10 chars and long labels within 25', () => {
-    const shorts = [...SHORTCUTS_XML.matchAll(/android:shortcutShortLabel="([^"]+)"/g)].map(
-      (m) => m[1],
+    // Labels live in STRINGS_XML; SHORTCUTS_XML only references them.
+    const strings = new Map(
+      [...STRINGS_XML.matchAll(/<string name="([^"]+)">([^<]+)<\/string>/g)].map(
+        (m) => [m[1], m[2]],
+      ),
     );
-    const longs = [...SHORTCUTS_XML.matchAll(/android:shortcutLongLabel="([^"]+)"/g)].map(
-      (m) => m[1],
+    const shorts = ['shortcut_now_short', 'shortcut_calendar_short', 'shortcut_stats_short'].map(
+      (n) => strings.get(n),
+    );
+    const longs = ['shortcut_now_long', 'shortcut_calendar_long', 'shortcut_stats_long'].map(
+      (n) => strings.get(n),
     );
     expect(shorts).toEqual(['What now?', 'Calendar', 'Stats']);
-    expect(shorts.every((s) => s.length <= 10)).toBe(true);
+    expect(shorts.every((s) => s!.length <= 10)).toBe(true);
     expect(longs).toEqual(['What should I do now?', 'Open the calendar', 'Open your stats']);
-    expect(longs.every((s) => s.length <= 25)).toBe(true);
+    expect(longs.every((s) => s!.length <= 25)).toBe(true);
   });
 
   it('has no emoji in any label', () => {
     // eslint-disable-next-line no-control-regex
-    expect(SHORTCUTS_XML).not.toMatch(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/u);
+    expect(STRINGS_XML).not.toMatch(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/u);
   });
 });
 

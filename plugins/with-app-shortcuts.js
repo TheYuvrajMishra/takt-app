@@ -90,15 +90,31 @@ const DRAWABLES = {
 `,
 };
 
+// Labels MUST be string resources: aapt rejects literal strings here
+// (shortcutShortLabel/shortcutLongLabel are reference-type attributes —
+// CI failed on 'What now?' is incompatible with attribute
+// shortcutShortLabel (attr) reference). The strings live in
+// res/values/shortcuts_strings.xml, written by the same dangerous mod.
+const STRINGS_XML = `<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="shortcut_now_short">What now?</string>
+  <string name="shortcut_now_long">What should I do now?</string>
+  <string name="shortcut_calendar_short">Calendar</string>
+  <string name="shortcut_calendar_long">Open the calendar</string>
+  <string name="shortcut_stats_short">Stats</string>
+  <string name="shortcut_stats_long">Open your stats</string>
+</resources>
+`;
+
 const SHORTCUTS_XML = `<?xml version="1.0" encoding="utf-8"?>
-<!-- Static launcher shortcuts for Takt. Keep labels short, no emoji. -->
+<!-- Static launcher shortcuts for Takt. Labels are @string references. -->
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
   <shortcut
     android:shortcutId="now"
     android:enabled="true"
     android:icon="@drawable/ic_shortcut_now"
-    android:shortcutShortLabel="What now?"
-    android:shortcutLongLabel="What should I do now?">
+    android:shortcutShortLabel="@string/shortcut_now_short"
+    android:shortcutLongLabel="@string/shortcut_now_long">
     <intent
       android:action="android.intent.action.VIEW"
       android:targetPackage="com.takt.app"
@@ -109,8 +125,8 @@ const SHORTCUTS_XML = `<?xml version="1.0" encoding="utf-8"?>
     android:shortcutId="calendar"
     android:enabled="true"
     android:icon="@drawable/ic_shortcut_calendar"
-    android:shortcutShortLabel="Calendar"
-    android:shortcutLongLabel="Open the calendar">
+    android:shortcutShortLabel="@string/shortcut_calendar_short"
+    android:shortcutLongLabel="@string/shortcut_calendar_long">
     <intent
       android:action="android.intent.action.VIEW"
       android:targetPackage="com.takt.app"
@@ -121,8 +137,8 @@ const SHORTCUTS_XML = `<?xml version="1.0" encoding="utf-8"?>
     android:shortcutId="stats"
     android:enabled="true"
     android:icon="@drawable/ic_shortcut_stats"
-    android:shortcutShortLabel="Stats"
-    android:shortcutLongLabel="Open your stats">
+    android:shortcutShortLabel="@string/shortcut_stats_short"
+    android:shortcutLongLabel="@string/shortcut_stats_long">
     <intent
       android:action="android.intent.action.VIEW"
       android:targetPackage="com.takt.app"
@@ -193,9 +209,15 @@ function withAppShortcuts(config) {
       );
       const xmlDir = path.join(resRoot, 'xml');
       const drawableDir = path.join(resRoot, 'drawable');
+      const valuesDir = path.join(resRoot, 'values');
       await fs.promises.mkdir(xmlDir, { recursive: true });
       await fs.promises.mkdir(drawableDir, { recursive: true });
+      await fs.promises.mkdir(valuesDir, { recursive: true });
       await fs.promises.writeFile(path.join(xmlDir, 'shortcuts.xml'), SHORTCUTS_XML);
+      await fs.promises.writeFile(
+        path.join(valuesDir, 'shortcuts_strings.xml'),
+        STRINGS_XML,
+      );
       for (const [name, content] of Object.entries(DRAWABLES)) {
         await fs.promises.writeFile(path.join(drawableDir, name), content);
       }
@@ -209,4 +231,5 @@ function withAppShortcuts(config) {
 module.exports = withAppShortcuts;
 module.exports.addShortcutsMetaData = addShortcutsMetaData;
 module.exports.SHORTCUTS_XML = SHORTCUTS_XML;
+module.exports.STRINGS_XML = STRINGS_XML;
 module.exports.DRAWABLES = DRAWABLES;
