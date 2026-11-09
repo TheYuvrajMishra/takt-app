@@ -2,14 +2,13 @@ import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { colors, fonts, hairline, radii, spacing } from '../theme/tokens';
-import { DEFAULT_CATEGORIES, DEFAULT_SETTINGS, type Settings } from '../types';
+import { DEFAULT_CATEGORIES, type Settings } from '../types';
 import { CategoryIcon } from '../components/CategoryIcon';
+import { useStore } from '../store/useStore';
 
-// TODO (store wiring): `src/store/useStore.ts` does not exist yet (Worker A).
-// Settings below are local state seeded from DEFAULT_SETTINGS. When the
-// store lands, initialise from it and persist every change through it.
-// Backup/restore and the test nudge are likewise guarded until their
-// backing modules exist — see the notes on each handler.
+// Settings live in the zustand store (persisted via sqlite). The "Do not
+// nudge" defaults below are still local state: there is no store field for
+// them yet, so they do not survive a restart.
 
 const BACKUP_FILENAME = 'takt-backup.json';
 
@@ -87,7 +86,8 @@ function ToggleRow({
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const settings = useStore((s) => s.settings);
+  const updateSettings = useStore((s) => s.updateSettings);
   const [dndDefault, setDndDefault] = useState(false);
   const [dndCats, setDndCats] = useState<string[]>(['cat-sleep']);
   const [toast, setToast] = useState<string | null>(null);
@@ -97,12 +97,13 @@ export default function SettingsScreen() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  const patch = (p: Partial<Settings>) => setSettings((s) => ({ ...s, ...p }));
+  const patch = (p: Partial<Settings>) => {
+    void updateSettings(p);
+  };
 
   const testNudgeNow = async () => {
     try {
-      // `src/lib/nudge.ts` does not exist yet (Worker A). Dynamic import by
-      // variable so the bundler/typechecker do not hard-require it.
+      // Dynamic import so a nudge-engine failure never breaks this screen.
       const nudgePath = '../lib/nudge';
       const mod = (await import(nudgePath)) as { testNudgeNow?: () => Promise<void> | void };
       if (typeof mod.testNudgeNow === 'function') {
@@ -141,8 +142,7 @@ export default function SettingsScreen() {
       }
       showToast('Backup saved to ' + BACKUP_FILENAME);
     } catch {
-      // expo-file-system / expo-sharing are not installed yet.
-      showToast('Backup needs expo-file-system — not installed yet.');
+      showToast('Backup failed — could not write the file.');
     }
   };
 
@@ -163,12 +163,12 @@ export default function SettingsScreen() {
       }
       const raw = await fs.readAsStringAsync(uri);
       const parsed = JSON.parse(raw) as { settings?: Settings; dndDefault?: boolean; dndCats?: string[] };
-      if (parsed.settings) setSettings({ ...DEFAULT_SETTINGS, ...parsed.settings });
+      if (parsed.settings) void updateSettings(parsed.settings);
       if (typeof parsed.dndDefault === 'boolean') setDndDefault(parsed.dndDefault);
       if (Array.isArray(parsed.dndCats)) setDndCats(parsed.dndCats);
       showToast('Backup restored.');
     } catch {
-      showToast('Restore needs expo-file-system — not installed yet.');
+      showToast('Restore failed — could not read the backup file.');
     }
   };
 

@@ -13,15 +13,16 @@ import { useRouter } from 'expo-router';
 import * as Notifications from 'expo-notifications';
 import * as Haptics from 'expo-haptics';
 import { colors, fonts, hairline, radii, spacing, categoryColorHex } from '../theme/tokens';
-import { DEFAULT_CATEGORIES, DEFAULT_SETTINGS, type Category, type Settings } from '../types';
-import { earliestEmptySlot, minToTime, snap5 } from '../lib/core';
+import { DEFAULT_CATEGORIES, type Category, type Settings } from '../types';
+import { dateKey, earliestEmptySlot, minToTime, snap5 } from '../lib/core';
 import { CategoryIcon } from '../components/CategoryIcon';
+import { useStore } from '../store/useStore';
 
-// TODO (store wiring): `src/store/useStore.ts` does not exist yet (Worker A).
-// On finish, this screen calls `onDone` (if provided) and navigates to
-// `/(tabs)`. The root layout (owned by another worker) should render this
-// screen first when `shouldShowOnboarding(settings)` is true, and persist
-// `settings.onboardingDone = true` through the store when it lands.
+// On finish, `settings.onboardingDone` is persisted through the store and
+// the root layout's onboarding gate stops redirecting here.
+// Steps 3–4 (category picks, sandbox timeline) are still local state:
+// the sandbox is explicitly "nothing is saved yet", and there is no store
+// field for the picked-category set. Step 7 schedules a real block.
 
 export function shouldShowOnboarding(settings: Settings): boolean {
   return !settings.onboardingDone;
@@ -46,6 +47,8 @@ const RADIAL_CATS = ['cat-food', 'cat-workout', 'cat-learning', 'cat-journaling'
 
 export default function OnboardingScreen({ onDone }: { onDone?: () => void }) {
   const router = useRouter();
+  const updateSettings = useStore((s) => s.updateSettings);
+  const addBlock = useStore((s) => s.addBlock);
   const [step, setStep] = useState(1);
   const [done, setDone] = useState(false);
 
@@ -90,8 +93,7 @@ export default function OnboardingScreen({ onDone }: { onDone?: () => void }) {
 
   const finish = () => {
     setDone(true);
-    // TODO (store wiring): persist `{ ...DEFAULT_SETTINGS, onboardingDone: true }`
-    // through the store once it exists.
+    void updateSettings({ onboardingDone: true });
     onDone?.();
     try {
       router.replace('/(tabs)');
@@ -509,8 +511,21 @@ export default function OnboardingScreen({ onDone }: { onDone?: () => void }) {
               <Pressable
                 style={styles.primaryButton}
                 onPress={() => {
-                  // TODO (store wiring): create a real template block for
-                  // tomorrow from firstTaskCat / firstTaskStart via the store.
+                  // Real block, tomorrow only: a one-off first task, not a
+                  // recurring template block.
+                  const cat = cats.find((c) => c.id === firstTaskCat);
+                  const tomorrow = new Date();
+                  tomorrow.setDate(tomorrow.getDate() + 1);
+                  void addBlock(
+                    {
+                      categoryId: firstTaskCat,
+                      title: cat?.name ?? 'First task',
+                      startMin: firstTaskStart,
+                      durationMin: 30,
+                    },
+                    dateKey(tomorrow),
+                    'today',
+                  );
                   setFirstTaskScheduled(true);
                 }}
               >
@@ -520,7 +535,7 @@ export default function OnboardingScreen({ onDone }: { onDone?: () => void }) {
               </Pressable>
               {firstTaskScheduled ? (
                 <Text style={styles.scheduledNote}>
-                  {cats.find((c) => c.id === firstTaskCat)?.name} at {minToTime(firstTaskStart)} — see you
+                  {cats.find((c) => c.id === firstTaskCat)?.name} at {minToTime(firstTaskStart)} tomorrow — see you
                   there.
                 </Text>
               ) : null}

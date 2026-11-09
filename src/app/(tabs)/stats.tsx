@@ -8,18 +8,13 @@ import { dateKey } from '../../lib/core';
 import {
   computeStreaks,
   daySummary,
+  daysFromStore,
   monthlyScores,
   onTimeRate,
   perCategoryFocusMinutes,
-  sampleDataset,
   weeklyTrend,
 } from '../../lib/stats';
-
-// TODO (store wiring): `src/store/useStore.ts` exists but does not compile
-// yet (Worker A: wrong './core'/'./db' paths, 'CategoryColorName' import).
-// Until it is fixed, stats run on `sampleDataset()`. Swap this line for
-// `daysFromStore(getBlocksForDate, completions)` from `src/lib/stats.ts`
-// once the store is green — no other screen logic changes.
+import { useStore } from '../../store/useStore';
 
 const CELL = 40;
 const GAP = 4;
@@ -78,8 +73,18 @@ export default function StatsScreen() {
   const [selectedCats, setSelectedCats] = useState<string[]>([]);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
-  // TODO (store wiring): swap this for useStore() data.
-  const days = useMemo(() => sampleDataset(), []);
+  // Real data from the store: per-date blocks + flat completions.
+  // templates / dayOverrides are subscribed so the dataset rebuilds
+  // whenever blocks change, not only when completions change.
+  const getBlocksForDate = useStore((s) => s.getBlocksForDate);
+  const completions = useStore((s) => s.completions);
+  const templates = useStore((s) => s.templates);
+  const dayOverrides = useStore((s) => s.dayOverrides);
+  const days = useMemo(
+    () => daysFromStore(getBlocksForDate, completions),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [completions, templates, dayOverrides],
+  );
 
   const now = new Date();
   const viewDate = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);

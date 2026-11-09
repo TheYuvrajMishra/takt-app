@@ -218,6 +218,17 @@ export interface TaktState {
     newDurationMin: number,
     scope: Scope,
   ) => Promise<void>;
+  patchBlock: (
+    blockId: string,
+    date: string,
+    patch: Partial<
+      Pick<
+        Block,
+        'categoryId' | 'subcategoryId' | 'title' | 'notes' | 'doNotNudge' | 'alarmMode'
+      >
+    >,
+    scope: Scope,
+  ) => Promise<void>;
   deleteBlock: (blockId: string, date: string, scope: Scope) => Promise<void>;
 
   markDone: (blockId: string, date: string) => Promise<void>;
@@ -504,6 +515,38 @@ export const useStore = create<TaktState>()((set, get) => {
             }),
           );
           emitToast('Resized for this weekday onwards.');
+        }
+      }
+      notifyAfterChange();
+    },
+
+    patchBlock: async (blockId, date, patch, scope) => {
+      pushUndo();
+      const weekday = new Date(`${date}T00:00:00`).getDay();
+      if (scope === 'today') {
+        const blocks = get()
+          .getBlocksForDate(date)
+          .map((b) => (b.id === blockId ? { ...b, ...patch } : b));
+        await commitOverride(date, blocks);
+        emitToast('Updated for today only.');
+      } else {
+        const template = await ensureTemplate(date);
+        const found = template.blocks.some((b) => b.id === blockId);
+        if (!found) {
+          // Override-only block: fall back to a today-only patch.
+          const blocks = get()
+            .getBlocksForDate(date)
+            .map((b) => (b.id === blockId ? { ...b, ...patch } : b));
+          await commitOverride(date, blocks);
+          emitToast('That block only exists today, so it updated for today only.');
+        } else if (scope === 'onwards') {
+          await commitTemplate(updateTemplateBlock(template, blockId, patch));
+          emitToast('Updated from today onwards.');
+        } else {
+          await commitTemplate(
+            splitTemplateBlockForWeekday(template, blockId, weekday, patch),
+          );
+          emitToast('Updated for this weekday onwards.');
         }
       }
       notifyAfterChange();

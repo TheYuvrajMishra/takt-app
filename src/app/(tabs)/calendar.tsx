@@ -4,22 +4,20 @@
 // bottom edge to resize, long-press empty slot to create, long-press a
 // block to multi-select, copy/paste, duplicate, undo/redo, pinch zoom,
 // two-finger swipe to change day, scope sheet on every change, routine
-// template picker. No store exists yet (src/store/useStore.ts absent),
-// so blocks live in local state seeded with sample data — see the TODO
-// in src/components/calendar/helpers.ts. No Dock.tsx / RadialMenu.tsx
-// exist yet (Worker B), so the bottom dock is an inline category-chip
-// dock that creates a 25-min block in the earliest empty slot.
+// template picker. Blocks come from the zustand store
+// (src/store/useStore.ts); every mutation runs through a store action
+// with the scope the user picks in the scope sheet. The bottom dock is
+// the real shared Dock.tsx — dropping a node onto the grid creates the
+// block at the drop position, dropping outside the grid (or tapping the
+// "+" customize action) falls back to the earliest free slot.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  LayoutAnimation,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
-  UIManager,
   useWindowDimensions,
   View,
   type ScrollViewInstance,
@@ -43,13 +41,13 @@ import {
   categoryById,
   newId,
   ROUTINE_TEMPLATES,
-  seedDays,
   startOfWeek,
   type RoutineTemplateDef,
 } from '../../components/calendar/helpers';
 import { BlockCard } from '../../components/calendar/BlockCard';
+import { Dock } from '../../components/Dock';
+import { useStore } from '../../store/useStore';
 
-type Days = Record<string, Block[]>;
 type ViewMode = 'day' | '3day' | 'week';
 
 interface Ghost {
@@ -77,6 +75,12 @@ interface SwapSheet {
   conflict: Block;
 }
 
+/** A mutation waiting on the scope sheet: runs once a scope is picked. */
+interface PendingChange {
+  description: string;
+  run: (scope: Scope) => Promise<void>;
+}
+
 const GUTTER = 48;
 const HOURS = 24;
 const MIN_HOUR_H = 48;
@@ -102,16 +106,34 @@ export default function CalendarScreen() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const scrollRef = useRef<ScrollViewInstance | null>(null);
+  const gridRef = useRef<React.ComponentRef<typeof View> | null>(null);
 
-  const [days, setDays] = useState<Days>(() => seedDays());
+  // Store: blocks resolve per date (override wins, else template).
+  // templates / dayOverrides are subscribed so the grid re-renders on
+  // every block change, including undo/redo.
+  const hydrated = useStore((s) => s.hydrated);
+  const load = useStore((s) => s.load);
+  const categories = useStore((s) => s.categories);
+  const templates = useStore((s) => s.templates);
+  const dayOverrides = useStore((s) => s.dayOverrides);
+  const getBlocksForDate = useStore((s) => s.getBlocksForDate);
+  const addBlock = useStore((s) => s.addBlock);
+  const moveBlock = useStore((s) => s.moveBlock);
+  const resizeBlock = useStore((s) => s.resizeBlock);
+  const patchBlock = useStore((s) => s.patchBlock);
+  const deleteBlock = useStore((s) => s.deleteBlock);
+  const undoStore = useStore((s) => s.undo);
+  const redoStore = useStore((s) => s.redo);
+  const undoCount = useStore((s) => s.undoStack.length);
+  const redoCount = useStore((s) => s.redoStack.length);
+  const lastToast = useStore((s) => s.lastToast);
+
   const [anchor, setAnchor] = useState<Date>(() => new Date());
   const [view, setView] = useState<ViewMode>('day');
   const [hourHeight, setHourHeight] = useState(64);
   const [nowMin, setNowMin] = useState(() => nowMinutes());
   const [scrollEnabled, setScrollEnabled] = useState(true);
 
-  const [past, setPast] = useState<Days[]>([]);
-  const [future, setFuture] = useState<Days[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [clipboard, setClipboard] = useState<ClipboardItem[]>([]);
   const [ghost, setGhost] = useState<Ghost | null>(null);
@@ -124,12 +146,18 @@ export default function CalendarScreen() {
   const [qcTitle, setQcTitle] = useState('');
   const [qcCategoryId, setQcCategoryId] = useState(DEFAULT_CATEGORIES[0].id);
   const [qcDuration, setQcDuration] = useState(DEFAULT_DURATION_MIN);
-  const [scopeSheet, setScopeSheet] = useState<{ description: string } | null>(null);
+  // Pending change: the gesture is done, the scope sheet is asking which
+  // scope to apply it with. Dismissing the sheet cancels the change.
+  const [pending, setPending] = useState<PendingChange | null>(null);
   const [scopeMore, setScopeMore] = useState(false);
   const [lastScope, setLastScope] = useState<Scope>('today');
   const [swapSheet, setSwapSheet] = useState<SwapSheet | null>(null);
   const [templateSheet, setTemplateSheet] = useState(false);
   const [templateTarget, setTemplateTarget] = useState<'day' | 'visible'>('day');
+
+  // Categories for the dock / quick sheet: store first, defaults until
+  // the store hydrates.
+  const cats = categories.length > 0 ? categories : DEFAULT_CATEGORIES;
 
   const hourHeightRef = useRef(hourHeight);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -141,11 +169,10 @@ export default function CalendarScreen() {
     hourHeightRef.current = hourHeight;
   }, [hourHeight]);
 
+  // Hydrate the store once (the root layout also loads it).
   useEffect(() => {
-    if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-      UIManager.setLayoutAnimationEnabledExperimental(true);
-    }
-  }, []);
+    if (!hydrated) void load();
+  }, [hydrated, load]);
 
   useEffect(() => {
     const t = setInterval(() => setNowMin(nowMinutes()), 30_000);
@@ -176,6 +203,14 @@ export default function CalendarScreen() {
     toastTimer.current = setTimeout(() => setToast(null), 2600);
   }, []);
 
+  // Store toasts (every store mutation emits one) surface here too.
+  // Read via lastToast rather than setToastHandler so this screen does
+  // not clobber the Today screen's handler — both tabs stay mounted.
+  useEffect(() => {
+    if (!lastToast) return;
+    showToast(lastToast);
+  }, [lastToast, showToast]);
+
   const visibleDates = useCallback((): Date[] => {
     if (view === 'day') return [anchor];
     if (view === '3day') return [anchor, addDays(anchor, 1), addDays(anchor, 2)];
@@ -196,45 +231,119 @@ export default function CalendarScreen() {
 
   const findBlock = useCallback(
     (id: string): { block: Block; date: string } | null => {
-      for (const [date, list] of Object.entries(days)) {
-        const b = list.find((x) => x.id === id);
-        if (b) return { block: b, date };
+      for (const d of visibleDates) {
+        const key = dateKey(d);
+        const b = getBlocksForDate(key).find((x) => x.id === id);
+        if (b) return { block: b, date: key };
       }
       return null;
     },
-    [days],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [visibleDates, templates, dayOverrides],
   );
 
-  // Every mutating change commits a history entry and asks scope.
-  const commit = useCallback(
-    (next: Days, description: string, animate = false) => {
-      if (animate) LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-      setPast((p) => [...p, days]);
-      setFuture([]);
-      setDays(next);
+  // Every mutating change asks scope first, then runs against the store.
+  const requestScope = useCallback(
+    (description: string, run: (scope: Scope) => Promise<void>) => {
       setScopeMore(false);
-      setScopeSheet({ description });
+      setPending({ description, run });
     },
-    [days],
+    [],
+  );
+
+  const confirmScope = useCallback(
+    (scope: Scope) => {
+      const p = pending;
+      setPending(null);
+      setLastScope(scope);
+      if (p) void p.run(scope);
+    },
+    [pending],
+  );
+
+  const cancelPending = useCallback(() => {
+    setPending(null);
+    showToast('Change cancelled');
+  }, [showToast]);
+
+  /**
+   * Apply a locally computed auto-shift result to the store. The primary
+   * block moves/resizes with the chosen scope; neighbours that got pushed
+   * only ever shift for today, so their template recurrences (and ids)
+   * are untouched. Note: one drag can cost several store undo entries
+   * (one per shifted block) — the store has no multi-block batch op yet.
+   */
+  const applyShift = useCallback(
+    async (
+      date: string,
+      before: Block[],
+      shifted: Block[],
+      primaryId: string,
+      scope: Scope,
+    ) => {
+      const primaryBefore = before.find((b) => b.id === primaryId);
+      const primaryAfter = shifted.find((b) => b.id === primaryId);
+      if (primaryBefore && primaryAfter) {
+        if (primaryAfter.startMin !== primaryBefore.startMin) {
+          await moveBlock(primaryId, date, primaryAfter.startMin, scope);
+        }
+        if (primaryAfter.durationMin !== primaryBefore.durationMin) {
+          await resizeBlock(primaryId, date, primaryAfter.durationMin, scope);
+        }
+      }
+      for (const b of shifted) {
+        if (b.id === primaryId) continue;
+        const orig = before.find((x) => x.id === b.id);
+        if (orig && orig.startMin !== b.startMin) {
+          await moveBlock(b.id, date, b.startMin, 'today');
+        }
+      }
+    },
+    [moveBlock, resizeBlock],
+  );
+
+  /** Add a new block (from a locally computed shifted list) + shift neighbours. */
+  const applyCreated = useCallback(
+    async (
+      date: string,
+      before: Block[],
+      shifted: Block[],
+      createdId: string,
+      scope: Scope,
+    ) => {
+      const created = shifted.find((b) => b.id === createdId);
+      if (!created) return;
+      await addBlock(created, date, scope);
+      for (const b of shifted) {
+        if (b.id === createdId) continue;
+        const orig = before.find((x) => x.id === b.id);
+        if (orig && orig.startMin !== b.startMin) {
+          await moveBlock(b.id, date, b.startMin, 'today');
+        }
+      }
+    },
+    [addBlock, moveBlock],
+  );
+
+  /** After a scoped op that splits a template block (weekday scope), the
+   * block may come back with a new id — re-resolve it by start time. */
+  const resolveEditedId = useCallback(
+    (date: string, oldId: string, startMin: number): string => {
+      const list = getBlocksForDate(date);
+      if (list.some((b) => b.id === oldId)) return oldId;
+      return list.find((b) => b.startMin === startMin)?.id ?? oldId;
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [templates, dayOverrides],
   );
 
   const undo = useCallback(() => {
-    if (past.length === 0) return;
-    const prev = past[past.length - 1];
-    setFuture((f) => [days, ...f]);
-    setPast((p) => p.slice(0, -1));
-    setDays(prev);
-    showToast('Undid last change');
-  }, [past, days, showToast]);
+    void undoStore();
+  }, [undoStore]);
 
   const redo = useCallback(() => {
-    if (future.length === 0) return;
-    const next = future[0];
-    setPast((p) => [...p, days]);
-    setFuture((f) => f.slice(1));
-    setDays(next);
-    showToast('Redid change');
-  }, [future, days, showToast]);
+    void redoStore();
+  }, [redoStore]);
 
   // ---- drag / resize -------------------------------------------------
   const handleDragStart = useCallback(
@@ -243,12 +352,13 @@ export default function CalendarScreen() {
       if (!found) return;
       setDragId(id);
       setDragCtx({ id, date: found.date, durationMin: found.block.durationMin });
-      const others = (days[found.date] ?? []).filter((b) => b.id !== id);
+      const others = getBlocksForDate(found.date).filter((b) => b.id !== id);
       setMagnetEdges(
         others.flatMap((b) => [b.startMin, b.startMin + b.durationMin - found.block.durationMin]),
       );
     },
-    [findBlock, days],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [findBlock, templates, dayOverrides],
   );
 
   const handleDragPreview = useCallback(
@@ -269,7 +379,7 @@ export default function CalendarScreen() {
       setDragCtx(null);
       setMagnetEdges([]);
       if (!ctx || ctx.id !== id) return;
-      const list = days[ctx.date] ?? [];
+      const list = getBlocksForDate(ctx.date);
       const orig = list.find((b) => b.id === id);
       if (!orig) return;
       const moved: Block = { ...orig, startMin: clamp(snap5(snappedStart), 0, 24 * 60 - orig.durationMin) };
@@ -285,12 +395,12 @@ export default function CalendarScreen() {
         }
         return;
       }
-      const changed = shifted.some(
-        (b) => b.id !== id && (list.find((x) => x.id === b.id)?.startMin ?? -1) !== b.startMin,
+      requestScope(`Moved "${moved.title}"`, (scope) =>
+        applyShift(ctx.date, list, shifted, id, scope),
       );
-      commit({ ...days, [ctx.date]: shifted }, `Moved "${moved.title}"`, changed);
     },
-    [dragCtx, days, commit, showToast],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dragCtx, applyShift, requestScope, showToast, templates, dayOverrides],
   );
 
   const handleResizeStart = useCallback(
@@ -322,7 +432,7 @@ export default function CalendarScreen() {
       setDragId(null);
       setResizeCtx(null);
       if (!ctx || ctx.id !== id) return;
-      const list = days[ctx.date] ?? [];
+      const list = getBlocksForDate(ctx.date);
       const orig = list.find((b) => b.id === id);
       if (!orig || durationMin === orig.durationMin) return;
       const moved: Block = { ...orig, durationMin };
@@ -331,12 +441,12 @@ export default function CalendarScreen() {
         showToast('No room to grow here — neighbours are in the way');
         return;
       }
-      const changed = shifted.some(
-        (b) => b.id !== id && (list.find((x) => x.id === b.id)?.startMin ?? -1) !== b.startMin,
+      requestScope(`Resized "${moved.title}"`, (scope) =>
+        applyShift(ctx.date, list, shifted, id, scope),
       );
-      commit({ ...days, [ctx.date]: shifted }, `Resized "${moved.title}"`, changed);
     },
-    [resizeCtx, days, commit, showToast],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [resizeCtx, applyShift, requestScope, showToast, templates, dayOverrides],
   );
 
   const handleDragCancel = useCallback(() => {
@@ -385,13 +495,14 @@ export default function CalendarScreen() {
       const colIdx = clamp(Math.floor((x - GUTTER) / colW), 0, visibleDates.length - 1);
       const date = dateKey(visibleDates[colIdx]);
       const startMin = clamp(Math.floor((y / hourHeightRef.current) * 60 / 5) * 5, 0, 24 * 60 - 25);
-      const list = days[date] ?? [];
+      const list = getBlocksForDate(date);
       const hit = list.some((b) => startMin >= b.startMin && startMin < b.startMin + b.durationMin);
       if (hit) return; // block's own long-press handles it
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       openCreate(date, startMin);
     },
-    [colW, visibleDates, days, openCreate],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [colW, visibleDates, openCreate, templates, dayOverrides],
   );
 
   // ---- quick create / edit sheet -------------------------------------
@@ -406,14 +517,17 @@ export default function CalendarScreen() {
         startMin: quick.startMin,
         durationMin: qcDuration,
       };
-      const list = days[quick.date] ?? [];
+      const list = getBlocksForDate(quick.date);
       const merged = autoShiftBlocks(list, block);
       if (!merged) {
         showToast('That slot is full — pick another time');
         return;
       }
+      const date = quick.date;
       setQuick(null);
-      commit({ ...days, [quick.date]: merged }, `Created "${title}"`);
+      requestScope(`Created "${title}"`, (scope) =>
+        applyCreated(date, list, merged, block.id, scope),
+      );
       return;
     }
     const updated: Block = {
@@ -422,53 +536,81 @@ export default function CalendarScreen() {
       title,
       durationMin: qcDuration,
     };
-    const list = days[quick.date] ?? [];
+    const list = getBlocksForDate(quick.date);
     const merged = autoShiftBlocks(list, updated);
     if (!merged) {
       showToast('No room for that size here');
       return;
     }
+    const date = quick.date;
+    const orig = quick.block;
     setQuick(null);
-    commit({ ...days, [quick.date]: merged }, `Edited "${title}"`);
-  }, [quick, qcTitle, qcCategoryId, qcDuration, days, commit, showToast]);
+    requestScope(`Edited "${title}"`, async (scope) => {
+      // Category / title go through patchBlock; a duration change goes
+      // through resizeBlock (which also shifts neighbours via applyShift
+      // semantics below). A weekday-scope patch splits the template
+      // block, so the resize re-resolves the block id first.
+      const patch: Partial<
+        Pick<Block, 'categoryId' | 'subcategoryId' | 'title' | 'notes' | 'doNotNudge' | 'alarmMode'>
+      > = {};
+      if (updated.categoryId !== orig.categoryId) patch.categoryId = updated.categoryId;
+      if (updated.title !== orig.title) patch.title = updated.title;
+      if (Object.keys(patch).length > 0) {
+        await patchBlock(orig.id, date, patch, scope);
+      }
+      const mergedBlock = merged.find((b) => b.id === orig.id);
+      if (mergedBlock && mergedBlock.durationMin !== orig.durationMin) {
+        const id = resolveEditedId(date, orig.id, orig.startMin);
+        await resizeBlock(id, date, mergedBlock.durationMin, scope);
+      }
+      for (const b of merged) {
+        if (b.id === orig.id) continue;
+        const before = list.find((x) => x.id === b.id);
+        if (before && before.startMin !== b.startMin) {
+          await moveBlock(b.id, date, b.startMin, 'today');
+        }
+      }
+    });
+  }, [quick, qcTitle, qcCategoryId, qcDuration, requestScope, applyCreated, patchBlock, resizeBlock, moveBlock, resolveEditedId, showToast, templates, dayOverrides]);
 
   const deleteQuickBlock = useCallback(() => {
     if (!quick || quick.mode !== 'edit') return;
-    const list = (days[quick.date] ?? []).filter((b) => b.id !== quick.block.id);
+    const { id, title } = quick.block;
+    const date = quick.date;
     setQuick(null);
-    commit({ ...days, [quick.date]: list }, `Deleted "${quick.block.title}"`);
-  }, [quick, days, commit]);
+    requestScope(`Deleted "${title}"`, (scope) => deleteBlock(id, date, scope));
+  }, [quick, requestScope, deleteBlock]);
 
   // ---- multi-select actions ------------------------------------------
   const duplicateSelected = useCallback(() => {
-    let next = { ...days };
-    let added = 0;
-    for (const id of selected) {
-      const found = findBlock(id);
-      if (!found) continue;
-      const list = next[found.date] ?? [];
-      const copy: Block = {
-        ...found.block,
-        id: newId(),
-        title: `${found.block.title} (copy)`,
-      };
-      let merged = autoShiftBlocks(list, { ...copy, startMin: found.block.startMin + found.block.durationMin });
-      if (!merged) {
-        const slot = earliestEmptySlot(list, found.block.startMin + found.block.durationMin, copy.durationMin);
-        if (slot === null) continue;
-        merged = autoShiftBlocks(list, { ...copy, startMin: slot });
-      }
-      if (!merged) continue;
-      next = { ...next, [found.date]: merged };
-      added += 1;
-    }
-    if (added === 0) {
-      showToast('No room to duplicate');
-      return;
-    }
+    const ids = [...selected];
+    if (ids.length === 0) return;
     setSelected([]);
-    commit(next, `Duplicated ${added} block${added > 1 ? 's' : ''}`);
-  }, [selected, days, findBlock, commit, showToast]);
+    requestScope(`Duplicated ${ids.length} block${ids.length > 1 ? 's' : ''}`, async (scope) => {
+      let added = 0;
+      for (const id of ids) {
+        const found = findBlock(id);
+        if (!found) continue;
+        const list = getBlocksForDate(found.date);
+        const copy: Block = {
+          ...found.block,
+          id: newId(),
+          title: `${found.block.title} (copy)`,
+          startMin: found.block.startMin + found.block.durationMin,
+        };
+        let merged = autoShiftBlocks(list, copy);
+        if (!merged) {
+          const slot = earliestEmptySlot(list, found.block.startMin + found.block.durationMin, copy.durationMin);
+          if (slot === null) continue;
+          merged = autoShiftBlocks(list, { ...copy, startMin: slot });
+        }
+        if (!merged) continue;
+        await applyCreated(found.date, list, merged, copy.id, scope);
+        added += 1;
+      }
+      if (added === 0) showToast('No room to duplicate');
+    });
+  }, [selected, findBlock, requestScope, applyCreated, showToast, templates, dayOverrides]);
 
   const copySelected = useCallback(() => {
     const items: ClipboardItem[] = [];
@@ -491,40 +633,47 @@ export default function CalendarScreen() {
 
   const pasteClipboard = useCallback(() => {
     if (clipboard.length === 0) return;
-    let next = { ...days };
-    let added = 0;
-    let skipped = 0;
-    for (const item of clipboard) {
-      const list = next[anchorKey] ?? [];
-      const block: Block = { ...item, id: newId() };
-      const merged = autoShiftBlocks(list, block);
-      if (!merged) {
-        skipped += 1;
-        continue;
+    const items = [...clipboard];
+    const date = anchorKey;
+    requestScope(`Pasted ${items.length} block${items.length > 1 ? 's' : ''}`, async (scope) => {
+      let added = 0;
+      let skipped = 0;
+      for (const item of items) {
+        const list = getBlocksForDate(date);
+        const block: Block = { ...item, id: newId() };
+        const merged = autoShiftBlocks(list, block);
+        if (!merged) {
+          skipped += 1;
+          continue;
+        }
+        await applyCreated(date, list, merged, block.id, scope);
+        added += 1;
       }
-      next = { ...next, [anchorKey]: merged };
-      added += 1;
-    }
-    if (added === 0) {
-      showToast('No room to paste here');
-      return;
-    }
-    commit(next, `Pasted ${added} block${added > 1 ? 's' : ''}${skipped > 0 ? ` (${skipped} skipped)` : ''}`);
-  }, [clipboard, days, anchorKey, commit, showToast]);
+      if (added === 0) {
+        showToast('No room to paste here');
+      } else if (skipped > 0) {
+        showToast(`Pasted ${added} block${added > 1 ? 's' : ''} (${skipped} skipped)`);
+      }
+    });
+  }, [clipboard, anchorKey, requestScope, applyCreated, showToast, templates, dayOverrides]);
 
   const deleteSelected = useCallback(() => {
-    const ids = new Set(selected);
-    const next: Days = {};
-    for (const [date, list] of Object.entries(days)) next[date] = list.filter((b) => !ids.has(b.id));
+    const ids = [...selected];
+    if (ids.length === 0) return;
     setSelected([]);
-    commit(next, `Deleted ${selected.length} block${selected.length > 1 ? 's' : ''}`);
-  }, [selected, days, commit]);
+    requestScope(`Deleted ${ids.length} block${ids.length > 1 ? 's' : ''}`, async (scope) => {
+      for (const id of ids) {
+        const found = findBlock(id);
+        if (found) await deleteBlock(id, found.date, scope);
+      }
+    });
+  }, [selected, findBlock, requestScope, deleteBlock]);
 
   // ---- swap ------------------------------------------------------------
   const doSwap = useCallback(() => {
     if (!swapSheet) return;
     const { moved, origStart, date, conflict } = swapSheet;
-    const list = days[date] ?? [];
+    const list = getBlocksForDate(date);
     const swapped: Block[] = list.map((b) =>
       b.id === moved.id ? moved : b.id === conflict.id ? { ...conflict, startMin: origStart } : b,
     );
@@ -537,24 +686,25 @@ export default function CalendarScreen() {
       return;
     }
     setSwapSheet(null);
-    commit(
-      { ...days, [date]: [...swapped].sort((a, b) => a.startMin - b.startMin) },
-      `Swapped "${moved.title}" with "${conflict.title}"`,
-    );
-  }, [swapSheet, days, commit, showToast]);
+    requestScope(`Swapped "${moved.title}" with "${conflict.title}"`, async (scope) => {
+      await moveBlock(moved.id, date, moved.startMin, scope);
+      await moveBlock(conflict.id, date, origStart, scope);
+    });
+  }, [swapSheet, requestScope, moveBlock, showToast, templates, dayOverrides]);
 
   // ---- templates ---------------------------------------------------------
+  // A routine fills days with one-off blocks (scope 'today' per day), so
+  // applying a template never rewrites the user's recurring routine.
   const applyTemplate = useCallback(
-    (tpl: RoutineTemplateDef) => {
+    async (tpl: RoutineTemplateDef) => {
       const targets =
         templateTarget === 'day'
           ? [anchorKey]
           : visibleDates.map((d) => dateKey(d));
-      let next = { ...days };
       let added = 0;
       let skipped = 0;
       for (const date of targets) {
-        let list = next[date] ?? [];
+        let list = getBlocksForDate(date);
         for (const t of tpl.blocks) {
           const block: Block = { id: newId(), categoryId: t.categoryId, title: t.title, startMin: t.startMin, durationMin: t.durationMin };
           const merged = autoShiftBlocks(list, block);
@@ -562,25 +712,29 @@ export default function CalendarScreen() {
             skipped += 1;
             continue;
           }
-          list = merged;
+          await applyCreated(date, list, merged, block.id, 'today');
+          list = getBlocksForDate(date);
           added += 1;
         }
-        next = { ...next, [date]: list };
       }
       setTemplateSheet(false);
       if (added === 0) {
         showToast('No room to apply this template');
-        return;
+      } else if (skipped > 0) {
+        showToast(`Applied "${tpl.name}" (${skipped} skipped)`);
       }
-      commit(next, `Applied "${tpl.name}"${skipped > 0 ? ` (${skipped} skipped)` : ''}`);
     },
-    [templateTarget, anchorKey, visibleDates, days, commit, showToast],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [templateTarget, anchorKey, visibleDates, applyCreated, showToast, templates, dayOverrides],
   );
 
-  // ---- inline dock (no Dock.tsx / RadialMenu.tsx yet) --------------------
-  const dockCreate = useCallback(
+  // ---- dock (real Dock.tsx) ----------------------------------------------
+  // Dropping a node onto the grid creates the block at the drop position
+  // (column = day, y = start time). A drop outside the grid falls back to
+  // the earliest free slot, same as the old tap-to-add behaviour.
+  const dockCreateEarliest = useCallback(
     (cat: Category) => {
-      const list = days[anchorKey] ?? [];
+      const list = getBlocksForDate(anchorKey);
       const fromMin = anchorKey === todayKey ? nowMin : 0;
       const slot = earliestEmptySlot(list, fromMin, DEFAULT_DURATION_MIN);
       if (slot === null) {
@@ -595,9 +749,61 @@ export default function CalendarScreen() {
         durationMin: DEFAULT_DURATION_MIN,
       };
       const merged = autoShiftBlocks(list, block) ?? [...list, block].sort((a, b) => a.startMin - b.startMin);
-      commit({ ...days, [anchorKey]: merged }, `Added ${cat.name} at ${minToTime(slot)}`);
+      requestScope(`Added ${cat.name} at ${minToTime(slot)}`, (scope) =>
+        applyCreated(anchorKey, list, merged, block.id, scope),
+      );
     },
-    [days, anchorKey, todayKey, nowMin, commit, showToast],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [anchorKey, todayKey, nowMin, requestScope, applyCreated, showToast, templates, dayOverrides],
+  );
+
+  const handleDockDrop = useCallback(
+    (category: Category, x: number, y: number) => {
+      const node = gridRef.current;
+      if (!node) {
+        dockCreateEarliest(category);
+        return;
+      }
+      node.measure((_mx, _my, _w, _h, pageX, pageY) => {
+        const localX = x - pageX;
+        const localY = y - pageY;
+        const colIdx = Math.floor((localX - GUTTER) / colW);
+        const startMin = clamp(
+          Math.floor((localY / hourHeightRef.current) * 60 / 5) * 5,
+          0,
+          24 * 60 - DEFAULT_DURATION_MIN,
+        );
+        if (
+          colIdx < 0 ||
+          colIdx >= visibleDates.length ||
+          localY < 0 ||
+          localY > HOURS * hourHeightRef.current
+        ) {
+          dockCreateEarliest(category);
+          return;
+        }
+        const date = dateKey(visibleDates[colIdx]);
+        const list = getBlocksForDate(date);
+        const block: Block = {
+          id: newId(),
+          categoryId: category.id,
+          title: category.name,
+          startMin,
+          durationMin: DEFAULT_DURATION_MIN,
+        };
+        const merged = autoShiftBlocks(list, block);
+        if (!merged) {
+          showToast('That slot is full — pick another time');
+          return;
+        }
+        requestScope(
+          `Added ${category.name} at ${minToTime(block.startMin)}`,
+          (scope) => applyCreated(date, list, merged, block.id, scope),
+        );
+      });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [colW, visibleDates, dockCreateEarliest, requestScope, applyCreated, showToast, templates, dayOverrides],
   );
 
   // ---- gestures: pinch zoom + two-finger day swipe -----------------------
@@ -652,7 +858,7 @@ export default function CalendarScreen() {
   const renderBlocks = () =>
     visibleDates.map((date, colIdx) => {
       const key = dateKey(date);
-      const list = days[key] ?? [];
+      const list = getBlocksForDate(key);
       return list.map((block) => {
         const top = (block.startMin / 60) * hourHeight;
         const height = Math.max(28, (block.durationMin / 60) * hourHeight);
@@ -747,11 +953,11 @@ export default function CalendarScreen() {
             {MONTHS[anchor.getMonth()]} {anchor.getFullYear()}
           </Text>
           <View style={styles.headerActions}>
-            <Pressable onPress={undo} disabled={past.length === 0} style={styles.iconBtn}>
-              <Text style={[styles.iconBtnText, past.length === 0 && styles.disabledText]}>Undo</Text>
+            <Pressable onPress={undo} disabled={undoCount === 0} style={styles.iconBtn}>
+              <Text style={[styles.iconBtnText, undoCount === 0 && styles.disabledText]}>Undo</Text>
             </Pressable>
-            <Pressable onPress={redo} disabled={future.length === 0} style={styles.iconBtn}>
-              <Text style={[styles.iconBtnText, future.length === 0 && styles.disabledText]}>Redo</Text>
+            <Pressable onPress={redo} disabled={redoCount === 0} style={styles.iconBtn}>
+              <Text style={[styles.iconBtnText, redoCount === 0 && styles.disabledText]}>Redo</Text>
             </Pressable>
             <Pressable onPress={() => setAnchor(new Date())} style={styles.todayBtn}>
               <Text style={styles.todayBtnText}>Today</Text>
@@ -812,11 +1018,12 @@ export default function CalendarScreen() {
           <ScrollView
             ref={scrollRef}
             style={styles.gridScroll}
+            contentContainerStyle={styles.gridContent}
             scrollEnabled={scrollEnabled}
             showsVerticalScrollIndicator={false}
           >
             <GestureDetector gesture={backgroundLongPress}>
-              <View style={{ width: width, height: contentHeight }}>
+              <View ref={gridRef} style={{ width: width, height: contentHeight }}>
                 {renderHourRows()}
                 {visibleDates.map((_, i) => (
                   <View
@@ -835,7 +1042,7 @@ export default function CalendarScreen() {
 
         {/* Multi-select bar */}
         {selecting && (
-          <View style={styles.selectBar}>
+          <View style={[styles.selectBar, styles.selectBarAboveDock]}>
             <Text style={styles.selectCount}>{selected.length} selected</Text>
             <Pressable onPress={duplicateSelected} style={styles.selectAction}>
               <Text style={styles.selectActionText}>Duplicate</Text>
@@ -852,18 +1059,13 @@ export default function CalendarScreen() {
           </View>
         )}
 
-        {/* Inline dock (stand-in for Dock.tsx / RadialMenu.tsx) */}
-        <View style={[styles.dockWrap, { paddingBottom: Math.max(insets.bottom, spacing.sm) }]}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dock}>
-            {DEFAULT_CATEGORIES.map((cat) => (
-              <Pressable key={cat.id} onPress={() => dockCreate(cat)} style={styles.dockChip}>
-                <View style={[styles.dockDot, { backgroundColor: categoryColorHex[cat.color] }]} />
-                <Text style={styles.dockChipText}>{cat.name}</Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-          <Text style={styles.dockHint}>Tap a category to add a 25-min block in the earliest free slot</Text>
-        </View>
+        {/* Shared dock: drag a node onto the grid to place a block there */}
+        <Dock
+          categories={cats}
+          onDrop={handleDockDrop}
+          onCustomize={() => showToast('Dock customization coming soon.')}
+          style={{ bottom: 0 }}
+        />
 
         {toast && (
           <View style={[styles.toast, { bottom: 120 }]}>
@@ -888,7 +1090,7 @@ export default function CalendarScreen() {
               />
               <Text style={styles.sheetLabel}>Category</Text>
               <View style={styles.chipWrap}>
-                {DEFAULT_CATEGORIES.map((cat) => {
+                {cats.map((cat) => {
                   const active = qcCategoryId === cat.id;
                   return (
                     <Pressable
@@ -896,7 +1098,7 @@ export default function CalendarScreen() {
                       onPress={() => setQcCategoryId(cat.id)}
                       style={[styles.catChip, active && styles.catChipActive]}
                     >
-                      <View style={[styles.dockDot, { backgroundColor: categoryColorHex[cat.color] }]} />
+                      <View style={[styles.catDot, { backgroundColor: categoryColorHex[cat.color] }]} />
                       <Text style={[styles.catChipText, active && styles.catChipTextActive]}>{cat.name}</Text>
                     </Pressable>
                   );
@@ -932,24 +1134,21 @@ export default function CalendarScreen() {
           </Pressable>
         </Modal>
 
-        {/* Scope sheet — shown on every change */}
-        <Modal visible={scopeSheet !== null} transparent animationType="slide" onRequestClose={() => setScopeSheet(null)}>
-          <Pressable style={styles.sheetBackdrop} onPress={() => setScopeSheet(null)}>
+        {/* Scope sheet — shown on every change; the change only runs
+            once a scope is picked, dismissing cancels it. */}
+        <Modal visible={pending !== null} transparent animationType="slide" onRequestClose={cancelPending}>
+          <Pressable style={styles.sheetBackdrop} onPress={cancelPending}>
             <Pressable style={styles.sheet} onPress={() => undefined}>
               <View style={styles.sheetHandle} />
               <Text style={styles.sheetTitle}>Apply this change to…</Text>
-              {scopeSheet && <Text style={styles.sheetSub}>{scopeSheet.description}</Text>}
+              {pending && <Text style={styles.sheetSub}>{pending.description}</Text>}
               <Text style={styles.sheetNote}>
-                Last scope: {SCOPE_LABELS[lastScope]}. Template propagation is wired to the store once it lands.
+                Last scope: {SCOPE_LABELS[lastScope]}. Picking a scope applies the change to the routine template where it fits; a block that only exists today falls back to today only.
               </Text>
               {(['today', 'onwards'] as Scope[]).map((s) => (
                 <Pressable
                   key={s}
-                  onPress={() => {
-                    setLastScope(s);
-                    setScopeSheet(null);
-                    showToast(`Saved · ${SCOPE_LABELS[s]}`);
-                  }}
+                  onPress={() => confirmScope(s)}
                   style={styles.scopeRow}
                 >
                   <Text style={styles.scopeRowText}>{SCOPE_LABELS[s]}</Text>
@@ -961,11 +1160,7 @@ export default function CalendarScreen() {
                 </Pressable>
               ) : (
                 <Pressable
-                  onPress={() => {
-                    setLastScope('weekday');
-                    setScopeSheet(null);
-                    showToast(`Saved · ${SCOPE_LABELS.weekday}`);
-                  }}
+                  onPress={() => confirmScope('weekday')}
                   style={styles.scopeRow}
                 >
                   <Text style={styles.scopeRowText}>{SCOPE_LABELS.weekday}</Text>
@@ -1131,6 +1326,7 @@ const styles = StyleSheet.create({
   stripDayText: { fontFamily: fonts.semibold, fontSize: 15, color: colors.carbon },
   stripDayTextActive: { color: colors.paper },
   gridScroll: { flex: 1 },
+  gridContent: { paddingBottom: 110 },
   hourRow: { flexDirection: 'row', alignItems: 'flex-start' },
   hourLabelWrap: { width: GUTTER, alignItems: 'center', paddingTop: 2 },
   hourLabel: { fontFamily: fonts.regular, fontSize: 11, color: faintText },
@@ -1187,29 +1383,8 @@ const styles = StyleSheet.create({
   selectCount: { fontFamily: fonts.medium, fontSize: 13, color: colors.paper, flex: 1 },
   selectAction: { paddingHorizontal: 8, paddingVertical: 4 },
   selectActionText: { fontFamily: fonts.medium, fontSize: 13, color: colors.paper },
+  selectBarAboveDock: { marginBottom: 84 },
   selectDelete: { backgroundColor: colors.orchid, borderRadius: radii.pill },
-  dockWrap: { paddingTop: spacing.sm, paddingHorizontal: spacing.md },
-  dock: { gap: 8, paddingRight: spacing.md },
-  dockChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: colors.paper,
-    borderRadius: radii.pill,
-    borderWidth: 1,
-    borderColor: hairline,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-  },
-  dockDot: { width: 10, height: 10, borderRadius: 5 },
-  dockChipText: { fontFamily: fonts.medium, fontSize: 13, color: colors.carbon },
-  dockHint: {
-    fontFamily: fonts.regular,
-    fontSize: 11,
-    color: faintText,
-    textAlign: 'center',
-    paddingTop: 6,
-  },
   toast: {
     position: 'absolute',
     alignSelf: 'center',
@@ -1253,6 +1428,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.cloud,
   },
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  catDot: { width: 10, height: 10, borderRadius: 5 },
   catChip: {
     flexDirection: 'row',
     alignItems: 'center',

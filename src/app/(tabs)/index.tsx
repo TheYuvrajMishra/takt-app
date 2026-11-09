@@ -82,6 +82,7 @@ export default function TodayScreen() {
   const addBlock = useStore((s) => s.addBlock);
   const moveBlock = useStore((s) => s.moveBlock);
   const resizeBlock = useStore((s) => s.resizeBlock);
+  const patchBlock = useStore((s) => s.patchBlock);
   const deleteBlock = useStore((s) => s.deleteBlock);
   const snooze = useStore((s) => s.snooze);
   const setToastHandler = useStore((s) => s.setToastHandler);
@@ -221,14 +222,20 @@ export default function TodayScreen() {
   };
 
   // --- Sheet actions (all "Today only") -----------------------------------
-  // The store has no block-category/notes patch, so those two edits go
-  // delete + re-add with the same id (completion is restored afterwards).
-  const updateBlockToday = async (block: Block, patch: Partial<Block>) => {
-    const prev = getCompletion(block.id, today);
-    await deleteBlock(block.id, today, 'today');
-    await addBlock({ ...block, ...patch, id: block.id }, today, 'today');
-    if (prev?.status === 'complete') await markDone(block.id, today);
-    else if (prev?.status === 'progress') await markStarted(block.id, today);
+  // Category / notes edits go through the store's patchBlock, which keeps
+  // the block id (and its completion) intact.
+  type BlockPatch = Partial<
+    Pick<
+      Block,
+      'categoryId' | 'subcategoryId' | 'title' | 'notes' | 'doNotNudge' | 'alarmMode'
+    >
+  >;
+  const updateBlockToday = (block: Block, patch: BlockPatch) => {
+    void patchBlock(block.id, today, patch, 'today');
+    // Keep the open sheet in sync with the patched block.
+    setSheetBlock((prev) =>
+      prev && prev.id === block.id ? { ...prev, ...patch } : prev,
+    );
   };
 
   const openSheet = (block: Block) => {

@@ -3,13 +3,9 @@ import type { Block, BlockStatus, CompletionEntry } from '../types';
 
 // ---------------------------------------------------------------------------
 // Takt stats helpers — pure functions over day records.
-// TODO (store wiring): `src/store/useStore.ts` landed while this screen was
-// being built, but it is still mid-flight (it imports './core' / './db' and
-// 'CategoryColorName' from '../types', none of which resolve — Worker A's
-// errors, not this file's). Until those paths are fixed, screens run on
-// `sampleDataset()` below. When the store compiles, swap one line in
-// stats.tsx to `daysFromStore(useStore(s => s.getBlocksForDate),
-// useStore(s => s.completions))` — every helper already takes DayRecord[].
+// Screens are wired to the store via `daysFromStore(getBlocksForDate,
+// completions)` — see stats.tsx. `sampleDataset()` is kept only as a
+// deterministic fixture for tests / previews; no screen uses it.
 // ---------------------------------------------------------------------------
 
 export interface SampleBlock {
@@ -63,7 +59,7 @@ function mulberry32(seed: number): () => number {
 
 /**
  * Deterministic seeded sample dataset: 90 days ending today.
- * Clearly sample data — delete once the store is wired (see TODO above).
+ * Test / preview fixture only — no screen reads this anymore.
  */
 export function sampleDataset(daysBack = 90, seed = 20261110): DayRecord[] {
   const rand = mulberry32(seed);
@@ -99,9 +95,8 @@ export function sampleDataset(daysBack = 90, seed = 20261110): DayRecord[] {
 }
 
 /**
- * Store adapter (one-line wiring once `src/store/useStore.ts` compiles):
- * build DayRecords from the store's per-date block resolution + flat
- * completions. Usage in a screen:
+ * Store adapter: build DayRecords from the store's per-date block
+ * resolution + flat completions. Usage in a screen:
  *   const days = daysFromStore(useStore((s) => s.getBlocksForDate), useStore((s) => s.completions));
  */
 export function daysFromStore(

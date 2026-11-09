@@ -36,3 +36,7 @@ App: routine app that nudges you until you do the thing. Name **Takt**, package 
 - Fixed: app.json top-level splash removed (SDK 58 schema) -> expo-splash-screen plugin; installed expo-splash-screen, expo-file-system, expo-sharing, vite (vitest peer).
 - Wired root layout: store load, initNudges + response listener, onboarding gate (redirects to /onboarding until done).
 - Known gaps (see KNOWN_ISSUES.md): Calendar/Stats run on local sample data until store wiring lands; Dock drop creates at earliest slot, not drop position; no device smoke test yet.
+
+## Iteration 1 — store wiring (coordinator, 2026-11-10 ~00:40 IST)
+- Calendar, Stats, Settings, Onboarding all wired to the real zustand store; patchBlock added; real Dock used in Calendar with drop-position creation. tsc clean, vitest 44/44, android export bundles.
+- BLOCKER: gh OAuth token lacks `workflow` scope — push of `.github/workflows/build-apk.yml` rejected ("refusing to allow an OAuth App to create or update workflow ... without `workflow` scope"). Workflow file is in the local working tree at .github/workflows/build-apk.yml (untracked). Unblock: run `gh auth refresh --hostname github.com -s workflow` and complete the device-code flow at https://github.com/login/device (needs a browser + the user's GitHub login). Then `git add .github && git commit && git push` triggers CI.

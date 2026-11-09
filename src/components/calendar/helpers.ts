@@ -1,9 +1,9 @@
-// Calendar helpers (Worker C). Pure helpers + sample seed data.
-// TODO (store wiring): replace seedDays() with useStore blocks/overrides
-// once src/store/useStore.ts exists (Worker A). Do not invent a store shape.
+// Calendar helpers (Worker C). Pure helpers for the calendar grid.
+// Blocks come from the zustand store (src/store/useStore.ts) — this file
+// holds no sample data anymore.
 import { DEFAULT_CATEGORIES, type Block, type Category } from '../../types';
 import type { CategoryColorName } from '../../theme/tokens';
-import { dateKey, minToTime, snap5 } from '../../lib/core';
+import { minToTime, snap5 } from '../../lib/core';
 
 export { minToTime };
 
@@ -112,45 +112,3 @@ export const ROUTINE_TEMPLATES: RoutineTemplateDef[] = [
     ],
   },
 ];
-
-function seedBlock(
-  categoryId: string,
-  title: string,
-  startMin: number,
-  durationMin: number,
-): Block {
-  return { id: newId(), categoryId, title, startMin, durationMin };
-}
-
-/** Sample blocks for yesterday / today / tomorrow, relative to today. */
-export function seedDays(): Record<string, Block[]> {
-  const today = new Date();
-  const days: Record<string, Block[]> = {};
-  days[dateKey(addDays(today, -1))] = [
-    seedBlock('cat-workout', 'Morning run', 7 * 60, 45),
-    seedBlock('cat-job', 'Deep work', 9 * 60 + 30, 90),
-    seedBlock('cat-food', 'Lunch', 13 * 60, 30),
-    seedBlock('cat-project', 'Project time', 15 * 60, 90),
-    seedBlock('cat-journaling', 'Journaling', 21 * 60, 25),
-  ];
-  days[dateKey(today)] = [
-    seedBlock('cat-workout', 'Morning workout', 7 * 60, 45),
-    seedBlock('cat-food', 'Breakfast', 8 * 60, 30),
-    seedBlock('cat-job', 'Deep work', 9 * 60 + 30, 90),
-    seedBlock('cat-learning', 'Learning', 11 * 60 + 30, 25),
-    seedBlock('cat-food', 'Lunch', 13 * 60, 30),
-    seedBlock('cat-project', 'Project time', 14 * 60, 120),
-    seedBlock('cat-workout', 'Evening walk', 17 * 60, 30),
-    seedBlock('cat-food', 'Dinner', 19 * 60, 45),
-    seedBlock('cat-journaling', 'Journaling', 21 * 60, 30),
-    seedBlock('cat-sleep', 'Wind down', 22 * 60 + 30, 60),
-  ];
-  days[dateKey(addDays(today, 1))] = [
-    seedBlock('cat-study', 'Study', 8 * 60, 60),
-    seedBlock('cat-job', 'Work block', 10 * 60, 120),
-    seedBlock('cat-food', 'Lunch', 13 * 60, 30),
-    seedBlock('cat-learning', 'Learning', 16 * 60, 45),
-    seedBlock('cat-gaming', 'Gaming', 19 * 60, 60),
-  ];
-  return days;
-}
