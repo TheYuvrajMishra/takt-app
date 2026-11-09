@@ -324,13 +324,29 @@ function minutesNow(): number {
 }
 
 export const useStore = create<TaktState>()((set, get) => {
-  /** Undo-batch depth: while > 0, pushUndo() is a no-op because
-   * beginUndoBatch() already snapshotted once for the whole gesture. */
+  /** Undo-batch depth: while > 0, mutations inside the batch share the
+   * single snapshot taken (lazily) on the batch's first mutation. */
   let undoBatchDepth = 0;
+  /** True once the open batch has snapshotted. The snapshot is LAZY: it is
+   * taken on the first mutation inside the batch, not at begin — so an
+   * empty batch (a paste/duplicate/template with no room) plants no
+   * no-op undo entry and does not wipe the redo stack. */
+  let undoBatchSnapshotTaken = false;
 
   /** Snapshot current state onto the undo stack (call BEFORE mutating). */
   function pushUndo(): void {
-    if (undoBatchDepth > 0) return;
+    if (undoBatchDepth > 0) {
+      if (!undoBatchSnapshotTaken) {
+        undoBatchSnapshotTaken = true;
+        snapshotUndo();
+      }
+      return;
+    }
+    snapshotUndo();
+  }
+
+  /** Push the pre-mutation snapshot and clear redo (shared by pushUndo). */
+  function snapshotUndo(): void {
     const s = get();
     const undoStack = [...s.undoStack, snapshotOf(s)].slice(-UNDO_LIMIT);
     set({ undoStack, redoStack: [] });
@@ -665,13 +681,21 @@ export const useStore = create<TaktState>()((set, get) => {
     },
 
     moveBlock: async (blockId, date, newStartMin, scope) => {
-      pushUndo();
       const weekday = new Date(`${date}T00:00:00`).getDay();
       if (scope === 'today') {
-        const blocks = get()
-          .getBlocksForDate(date)
-          .map((b) => (b.id === blockId ? { ...b, startMin: newStartMin } : b));
-        await commitOverride(date, blocks);
+        const blocks = get().getBlocksForDate(date);
+        if (!blocks.some((b) => b.id === blockId)) {
+          // No-op guard: a stale/missing id must not plant a phantom undo
+          // entry (and wipe redo) for a block that is nowhere on this day.
+          // pushUndo runs only on branches that actually mutate, below.
+          emitToast('That block no longer exists on this day.');
+          return;
+        }
+        pushUndo();
+        await commitOverride(
+          date,
+          blocks.map((b) => (b.id === blockId ? { ...b, startMin: newStartMin } : b)),
+        );
         emitToast('Moved for today only.');
       } else {
         const template = await ensureTemplate(date);
@@ -683,21 +707,24 @@ export const useStore = create<TaktState>()((set, get) => {
           const blocks = get().getBlocksForDate(date);
           if (!blocks.some((b) => b.id === blockId)) {
             emitToast('That block no longer exists on this day.');
-          } else {
-            await commitOverride(
-              date,
-              blocks.map((b) =>
-                b.id === blockId ? { ...b, startMin: newStartMin } : b,
-              ),
-            );
-            emitToast('That block only exists today, so it moved for today only.');
+            return;
           }
+          pushUndo();
+          await commitOverride(
+            date,
+            blocks.map((b) =>
+              b.id === blockId ? { ...b, startMin: newStartMin } : b,
+            ),
+          );
+          emitToast('That block only exists today, so it moved for today only.');
         } else if (scope === 'onwards') {
+          pushUndo();
           await commitTemplate(
             updateTemplateBlock(template, resolvedId, { startMin: newStartMin }),
           );
           emitToast('Moved from today onwards.');
         } else {
+          pushUndo();
           await applyWeekdaySplit(template, resolvedId, weekday, {
             startMin: newStartMin,
           });
@@ -711,15 +738,22 @@ export const useStore = create<TaktState>()((set, get) => {
     },
 
     resizeBlock: async (blockId, date, newDurationMin, scope) => {
-      pushUndo();
       const weekday = new Date(`${date}T00:00:00`).getDay();
       if (scope === 'today') {
-        const blocks = get()
-          .getBlocksForDate(date)
-          .map((b) =>
+        const blocks = get().getBlocksForDate(date);
+        if (!blocks.some((b) => b.id === blockId)) {
+          // No-op guard (see moveBlock): pushUndo only where a mutation
+          // will actually land.
+          emitToast('That block no longer exists on this day.');
+          return;
+        }
+        pushUndo();
+        await commitOverride(
+          date,
+          blocks.map((b) =>
             b.id === blockId ? { ...b, durationMin: newDurationMin } : b,
-          );
-        await commitOverride(date, blocks);
+          ),
+        );
         emitToast('Resized for today only.');
       } else {
         const template = await ensureTemplate(date);
@@ -729,16 +763,18 @@ export const useStore = create<TaktState>()((set, get) => {
           const blocks = get().getBlocksForDate(date);
           if (!blocks.some((b) => b.id === blockId)) {
             emitToast('That block no longer exists on this day.');
-          } else {
-            await commitOverride(
-              date,
-              blocks.map((b) =>
-                b.id === blockId ? { ...b, durationMin: newDurationMin } : b,
-              ),
-            );
-            emitToast('That block only exists today, so it resized for today only.');
+            return;
           }
+          pushUndo();
+          await commitOverride(
+            date,
+            blocks.map((b) =>
+              b.id === blockId ? { ...b, durationMin: newDurationMin } : b,
+            ),
+          );
+          emitToast('That block only exists today, so it resized for today only.');
         } else if (scope === 'onwards') {
+          pushUndo();
           await commitTemplate(
             updateTemplateBlock(template, resolvedId, {
               durationMin: newDurationMin,
@@ -746,6 +782,7 @@ export const useStore = create<TaktState>()((set, get) => {
           );
           emitToast('Resized from today onwards.');
         } else {
+          pushUndo();
           await applyWeekdaySplit(template, resolvedId, weekday, {
             durationMin: newDurationMin,
           });
@@ -761,13 +798,20 @@ export const useStore = create<TaktState>()((set, get) => {
     },
 
     patchBlock: async (blockId, date, patch, scope) => {
-      pushUndo();
       const weekday = new Date(`${date}T00:00:00`).getDay();
       if (scope === 'today') {
-        const blocks = get()
-          .getBlocksForDate(date)
-          .map((b) => (b.id === blockId ? { ...b, ...patch } : b));
-        await commitOverride(date, blocks);
+        const blocks = get().getBlocksForDate(date);
+        if (!blocks.some((b) => b.id === blockId)) {
+          // No-op guard (see moveBlock): pushUndo only where a mutation
+          // will actually land.
+          emitToast('That block no longer exists on this day.');
+          return;
+        }
+        pushUndo();
+        await commitOverride(
+          date,
+          blocks.map((b) => (b.id === blockId ? { ...b, ...patch } : b)),
+        );
         emitToast('Updated for today only.');
       } else {
         const template = await ensureTemplate(date);
@@ -777,17 +821,20 @@ export const useStore = create<TaktState>()((set, get) => {
           const blocks = get().getBlocksForDate(date);
           if (!blocks.some((b) => b.id === blockId)) {
             emitToast('That block no longer exists on this day.');
-          } else {
-            await commitOverride(
-              date,
-              blocks.map((b) => (b.id === blockId ? { ...b, ...patch } : b)),
-            );
-            emitToast('That block only exists today, so it updated for today only.');
+            return;
           }
+          pushUndo();
+          await commitOverride(
+            date,
+            blocks.map((b) => (b.id === blockId ? { ...b, ...patch } : b)),
+          );
+          emitToast('That block only exists today, so it updated for today only.');
         } else if (scope === 'onwards') {
+          pushUndo();
           await commitTemplate(updateTemplateBlock(template, resolvedId, patch));
           emitToast('Updated from today onwards.');
         } else {
+          pushUndo();
           await applyWeekdaySplit(template, resolvedId, weekday, patch);
           emitToast('Updated for this weekday onwards.');
         }
@@ -876,10 +923,13 @@ export const useStore = create<TaktState>()((set, get) => {
     },
 
     snooze: async (blockId, date, minutes = SNOOZE_DEFAULT_MIN) => {
-      pushUndo();
+      // No-op guard BEFORE pushUndo: snoozing a missing/stale block (e.g.
+      // from a notification for a deleted block) must not plant a phantom
+      // undo entry or wipe redo.
       const blocks = get().getBlocksForDate(date);
       const block = blocks.find((b) => b.id === blockId);
       if (!block) return;
+      pushUndo();
       const nextStart = Math.min(
         block.startMin + minutes,
         24 * 60 - block.durationMin,
@@ -926,6 +976,9 @@ export const useStore = create<TaktState>()((set, get) => {
     },
 
     editCategory: async (id, patch) => {
+      // No-op guard BEFORE pushUndo (see moveBlock): an unknown id must
+      // not plant a phantom undo entry for an unchanged list.
+      if (!get().categories.some((c) => c.id === id)) return;
       pushUndo();
       const s = get();
       const next = s.categories.map((c) =>
@@ -939,6 +992,8 @@ export const useStore = create<TaktState>()((set, get) => {
     },
 
     deleteCategory: async (id) => {
+      // No-op guard BEFORE pushUndo (see moveBlock).
+      if (!get().categories.some((c) => c.id === id)) return;
       pushUndo();
       await db.deleteCategory(id);
       set((s) => ({ categories: s.categories.filter((c) => c.id !== id) }));
@@ -1055,11 +1110,11 @@ export const useStore = create<TaktState>()((set, get) => {
     canRedo: () => get().redoStack.length > 0,
 
     beginUndoBatch: () => {
-      if (undoBatchDepth === 0) pushUndo();
       undoBatchDepth += 1;
     },
     endUndoBatch: () => {
       undoBatchDepth = Math.max(0, undoBatchDepth - 1);
+      if (undoBatchDepth === 0) undoBatchSnapshotTaken = false;
     },
   };
 });

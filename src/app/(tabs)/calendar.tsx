@@ -170,6 +170,9 @@ export default function CalendarScreen() {
   const hourHeightRef = useRef(hourHeight);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const didScrollRef = useRef(false);
+  // Guards applyTemplate against a double-tap: without it, two overlapping
+  // applies would nest into one undo batch and one Undo would revert both.
+  const applyingTemplate = useRef(false);
   const baseH = useSharedValue(64);
   const lastPinchH = useSharedValue(64);
 
@@ -264,9 +267,16 @@ export default function CalendarScreen() {
       const p = pending;
       setPending(null);
       setLastScope(scope);
-      if (p) void p.run(scope);
+      if (p) {
+        // A throw inside the run (e.g. a sqlite failure on the 2nd of N
+        // pasted blocks) must not vanish: the batch finally-blocks already
+        // ran, so say what happened instead of failing silently.
+        void p.run(scope).catch(() => {
+          showToast('Something went wrong — the change may not have been applied');
+        });
+      }
     },
-    [pending],
+    [pending, showToast],
   );
 
   const cancelPending = useCallback(() => {
@@ -315,7 +325,11 @@ export default function CalendarScreen() {
   );
 
   /** Add a new block (from a locally computed shifted list) + shift neighbours.
-   * One undo entry per created block (store undo batch). */
+   * Opens its own undo batch, so a single create is one undo entry — and
+   * multi-block callers (duplicate / paste / apply-template) wrap the whole
+   * loop in an outer batch, which nests harmlessly (depth counter; the
+   * snapshot is taken lazily on the first mutation inside the batch),
+   * making the whole user action one entry. */
   const applyCreated = useCallback(
     async (
       date: string,
@@ -632,29 +646,36 @@ export default function CalendarScreen() {
     setSelected([]);
     requestScope(`Duplicated ${ids.length} block${ids.length > 1 ? 's' : ''}`, async (scope) => {
       let added = 0;
-      for (const id of ids) {
-        const found = findBlock(id);
-        if (!found) continue;
-        const list = getBlocksForDate(found.date);
-        const copy: Block = {
-          ...found.block,
-          id: newId(),
-          title: `${found.block.title} (copy)`,
-          startMin: found.block.startMin + found.block.durationMin,
-        };
-        let merged = autoShiftBlocks(list, copy);
-        if (!merged) {
-          const slot = earliestEmptySlot(list, found.block.startMin + found.block.durationMin, copy.durationMin);
-          if (slot === null) continue;
-          merged = autoShiftBlocks(list, { ...copy, startMin: slot });
+      // One undo entry for the whole duplicate action, not one per block:
+      // applyCreated's own batch nests inside this outer one.
+      beginUndoBatch();
+      try {
+        for (const id of ids) {
+          const found = findBlock(id);
+          if (!found) continue;
+          const list = getBlocksForDate(found.date);
+          const copy: Block = {
+            ...found.block,
+            id: newId(),
+            title: `${found.block.title} (copy)`,
+            startMin: found.block.startMin + found.block.durationMin,
+          };
+          let merged = autoShiftBlocks(list, copy);
+          if (!merged) {
+            const slot = earliestEmptySlot(list, found.block.startMin + found.block.durationMin, copy.durationMin);
+            if (slot === null) continue;
+            merged = autoShiftBlocks(list, { ...copy, startMin: slot });
+          }
+          if (!merged) continue;
+          await applyCreated(found.date, list, merged, copy.id, scope);
+          added += 1;
         }
-        if (!merged) continue;
-        await applyCreated(found.date, list, merged, copy.id, scope);
-        added += 1;
+      } finally {
+        endUndoBatch();
       }
       if (added === 0) showToast('No room to duplicate');
     });
-  }, [selected, findBlock, requestScope, applyCreated, showToast, templates, dayOverrides]);
+  }, [selected, findBlock, requestScope, applyCreated, showToast, templates, dayOverrides, beginUndoBatch, endUndoBatch]);
 
   const copySelected = useCallback(() => {
     const items: ClipboardItem[] = [];
@@ -682,16 +703,22 @@ export default function CalendarScreen() {
     requestScope(`Pasted ${items.length} block${items.length > 1 ? 's' : ''}`, async (scope) => {
       let added = 0;
       let skipped = 0;
-      for (const item of items) {
-        const list = getBlocksForDate(date);
-        const block: Block = { ...item, id: newId() };
-        const merged = autoShiftBlocks(list, block);
-        if (!merged) {
-          skipped += 1;
-          continue;
+      // One undo entry for the whole paste, not one per block (see above).
+      beginUndoBatch();
+      try {
+        for (const item of items) {
+          const list = getBlocksForDate(date);
+          const block: Block = { ...item, id: newId() };
+          const merged = autoShiftBlocks(list, block);
+          if (!merged) {
+            skipped += 1;
+            continue;
+          }
+          await applyCreated(date, list, merged, block.id, scope);
+          added += 1;
         }
-        await applyCreated(date, list, merged, block.id, scope);
-        added += 1;
+      } finally {
+        endUndoBatch();
       }
       if (added === 0) {
         showToast('No room to paste here');
@@ -699,7 +726,7 @@ export default function CalendarScreen() {
         showToast(`Pasted ${added} block${added > 1 ? 's' : ''} (${skipped} skipped)`);
       }
     });
-  }, [clipboard, anchorKey, requestScope, applyCreated, showToast, templates, dayOverrides]);
+  }, [clipboard, anchorKey, requestScope, applyCreated, showToast, templates, dayOverrides, beginUndoBatch, endUndoBatch]);
 
   const deleteSelected = useCallback(() => {
     const ids = [...selected];
@@ -751,35 +778,51 @@ export default function CalendarScreen() {
   // applying a template never rewrites the user's recurring routine.
   const applyTemplate = useCallback(
     async (tpl: RoutineTemplateDef) => {
-      const targets =
-        templateTarget === 'day'
-          ? [anchorKey]
-          : visibleDates.map((d) => dateKey(d));
-      let added = 0;
-      let skipped = 0;
-      for (const date of targets) {
-        let list = getBlocksForDate(date);
-        for (const t of tpl.blocks) {
-          const block: Block = { id: newId(), categoryId: t.categoryId, title: t.title, startMin: t.startMin, durationMin: t.durationMin };
-          const merged = autoShiftBlocks(list, block);
-          if (!merged) {
-            skipped += 1;
-            continue;
-          }
-          await applyCreated(date, list, merged, block.id, 'today');
-          list = getBlocksForDate(date);
-          added += 1;
-        }
+      if (applyingTemplate.current) {
+        showToast('Template is already applying');
+        return;
       }
-      setTemplateSheet(false);
-      if (added === 0) {
-        showToast('No room to apply this template');
-      } else if (skipped > 0) {
-        showToast(`Applied "${tpl.name}" (${skipped} skipped)`);
+      applyingTemplate.current = true;
+      try {
+        const targets =
+          templateTarget === 'day'
+            ? [anchorKey]
+            : visibleDates.map((d) => dateKey(d));
+        let added = 0;
+        let skipped = 0;
+        // One undo entry for the whole template application — it can add many
+        // blocks across several days, and one Undo must revert all of them.
+        beginUndoBatch();
+        try {
+          for (const date of targets) {
+            let list = getBlocksForDate(date);
+            for (const t of tpl.blocks) {
+              const block: Block = { id: newId(), categoryId: t.categoryId, title: t.title, startMin: t.startMin, durationMin: t.durationMin };
+              const merged = autoShiftBlocks(list, block);
+              if (!merged) {
+                skipped += 1;
+                continue;
+              }
+              await applyCreated(date, list, merged, block.id, 'today');
+              list = getBlocksForDate(date);
+              added += 1;
+            }
+          }
+        } finally {
+          endUndoBatch();
+        }
+        setTemplateSheet(false);
+        if (added === 0) {
+          showToast('No room to apply this template');
+        } else if (skipped > 0) {
+          showToast(`Applied "${tpl.name}" (${skipped} skipped)`);
+        }
+      } finally {
+        applyingTemplate.current = false;
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [templateTarget, anchorKey, visibleDates, applyCreated, showToast, templates, dayOverrides],
+    [templateTarget, anchorKey, visibleDates, applyCreated, showToast, templates, dayOverrides, beginUndoBatch, endUndoBatch],
   );
 
   // ---- dock (real Dock.tsx) ----------------------------------------------
