@@ -25,6 +25,7 @@
     "orientation": "portrait",
     "plugins": [
       "expo-router",
+      "./plugins/with-app-shortcuts",
       [
         "expo-notifications",
         {
