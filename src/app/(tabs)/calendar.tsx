@@ -1,0 +1,1326 @@
+// Takt — Calendar mode (Worker C).
+// Google-Calendar-style editor: day / 3-day / week hour grid, drag to
+// move (5-min snap, magnetic neighbours, ghost + time tooltip), drag the
+// bottom edge to resize, long-press empty slot to create, long-press a
+// block to multi-select, copy/paste, duplicate, undo/redo, pinch zoom,
+// two-finger swipe to change day, scope sheet on every change, routine
+// template picker. No store exists yet (src/store/useStore.ts absent),
+// so blocks live in local state seeded with sample data — see the TODO
+// in src/components/calendar/helpers.ts. No Dock.tsx / RadialMenu.tsx
+// exist yet (Worker B), so the bottom dock is an inline category-chip
+// dock that creates a 25-min block in the earliest empty slot.
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  LayoutAnimation,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  UIManager,
+  useWindowDimensions,
+  View,
+  type ScrollViewInstance,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { runOnJS, useSharedValue } from 'react-native-reanimated';
+import * as Haptics from 'expo-haptics';
+import {
+  DEFAULT_CATEGORIES,
+  DEFAULT_DURATION_MIN,
+  type Block,
+  type Category,
+  type Scope,
+} from '../../types';
+import { categoryColorHex, colors, faintText, fonts, hairline, radii, spacing } from '../../theme/tokens';
+import { dateKey, earliestEmptySlot, minToTime, overlaps, snap5 } from '../../lib/core';
+import {
+  addDays,
+  autoShiftBlocks,
+  categoryById,
+  newId,
+  ROUTINE_TEMPLATES,
+  seedDays,
+  startOfWeek,
+  type RoutineTemplateDef,
+} from '../../components/calendar/helpers';
+import { BlockCard } from '../../components/calendar/BlockCard';
+
+type Days = Record<string, Block[]>;
+type ViewMode = 'day' | '3day' | 'week';
+
+interface Ghost {
+  blockId: string;
+  date: string;
+  startMin: number;
+  durationMin: number;
+}
+
+interface ClipboardItem {
+  categoryId: string;
+  title: string;
+  startMin: number;
+  durationMin: number;
+}
+
+type QuickSheet =
+  | { mode: 'create'; date: string; startMin: number }
+  | { mode: 'edit'; date: string; block: Block };
+
+interface SwapSheet {
+  moved: Block;
+  origStart: number;
+  date: string;
+  conflict: Block;
+}
+
+const GUTTER = 48;
+const HOURS = 24;
+const MIN_HOUR_H = 48;
+const MAX_HOUR_H = 120;
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const SCOPE_LABELS: Record<Scope, string> = {
+  today: 'Today only',
+  onwards: 'From today onwards',
+  weekday: 'This weekday from today',
+};
+
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+function nowMinutes(): number {
+  const n = new Date();
+  return n.getHours() * 60 + n.getMinutes();
+}
+
+export default function CalendarScreen() {
+  const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const scrollRef = useRef<ScrollViewInstance | null>(null);
+
+  const [days, setDays] = useState<Days>(() => seedDays());
+  const [anchor, setAnchor] = useState<Date>(() => new Date());
+  const [view, setView] = useState<ViewMode>('day');
+  const [hourHeight, setHourHeight] = useState(64);
+  const [nowMin, setNowMin] = useState(() => nowMinutes());
+  const [scrollEnabled, setScrollEnabled] = useState(true);
+
+  const [past, setPast] = useState<Days[]>([]);
+  const [future, setFuture] = useState<Days[]>([]);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [clipboard, setClipboard] = useState<ClipboardItem[]>([]);
+  const [ghost, setGhost] = useState<Ghost | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragCtx, setDragCtx] = useState<{ id: string; date: string; durationMin: number } | null>(null);
+  const [resizeCtx, setResizeCtx] = useState<{ id: string; date: string } | null>(null);
+  const [magnetEdges, setMagnetEdges] = useState<number[]>([]);
+  const [toast, setToast] = useState<string | null>(null);
+  const [quick, setQuick] = useState<QuickSheet | null>(null);
+  const [qcTitle, setQcTitle] = useState('');
+  const [qcCategoryId, setQcCategoryId] = useState(DEFAULT_CATEGORIES[0].id);
+  const [qcDuration, setQcDuration] = useState(DEFAULT_DURATION_MIN);
+  const [scopeSheet, setScopeSheet] = useState<{ description: string } | null>(null);
+  const [scopeMore, setScopeMore] = useState(false);
+  const [lastScope, setLastScope] = useState<Scope>('today');
+  const [swapSheet, setSwapSheet] = useState<SwapSheet | null>(null);
+  const [templateSheet, setTemplateSheet] = useState(false);
+  const [templateTarget, setTemplateTarget] = useState<'day' | 'visible'>('day');
+
+  const hourHeightRef = useRef(hourHeight);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const didScrollRef = useRef(false);
+  const baseH = useSharedValue(64);
+  const lastPinchH = useSharedValue(64);
+
+  useEffect(() => {
+    hourHeightRef.current = hourHeight;
+  }, [hourHeight]);
+
+  useEffect(() => {
+    if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+      UIManager.setLayoutAnimationEnabledExperimental(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    const t = setInterval(() => setNowMin(nowMinutes()), 30_000);
+    return () => clearInterval(t);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+    },
+    [],
+  );
+
+  // Scroll to "now" on first mount.
+  useEffect(() => {
+    if (didScrollRef.current) return;
+    didScrollRef.current = true;
+    const t = setTimeout(() => {
+      scrollRef.current?.scrollTo({ y: Math.max(0, (nowMin / 60 - 1.5) * 64), animated: false });
+    }, 350);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2600);
+  }, []);
+
+  const visibleDates = useCallback((): Date[] => {
+    if (view === 'day') return [anchor];
+    if (view === '3day') return [anchor, addDays(anchor, 1), addDays(anchor, 2)];
+    const start = startOfWeek(anchor);
+    return Array.from({ length: 7 }, (_, i) => addDays(start, i));
+  }, [anchor, view])();
+
+  const colW = (width - GUTTER) / visibleDates.length;
+  const anchorKey = dateKey(anchor);
+  const todayKey = dateKey(new Date());
+  const selecting = selected.length > 0;
+
+  const stepSize = view === 'day' ? 1 : view === '3day' ? 3 : 7;
+  const step = useCallback(
+    (dir: number) => setAnchor((a) => addDays(a, dir * stepSize)),
+    [stepSize],
+  );
+
+  const findBlock = useCallback(
+    (id: string): { block: Block; date: string } | null => {
+      for (const [date, list] of Object.entries(days)) {
+        const b = list.find((x) => x.id === id);
+        if (b) return { block: b, date };
+      }
+      return null;
+    },
+    [days],
+  );
+
+  // Every mutating change commits a history entry and asks scope.
+  const commit = useCallback(
+    (next: Days, description: string, animate = false) => {
+      if (animate) LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setPast((p) => [...p, days]);
+      setFuture([]);
+      setDays(next);
+      setScopeMore(false);
+      setScopeSheet({ description });
+    },
+    [days],
+  );
+
+  const undo = useCallback(() => {
+    if (past.length === 0) return;
+    const prev = past[past.length - 1];
+    setFuture((f) => [days, ...f]);
+    setPast((p) => p.slice(0, -1));
+    setDays(prev);
+    showToast('Undid last change');
+  }, [past, days, showToast]);
+
+  const redo = useCallback(() => {
+    if (future.length === 0) return;
+    const next = future[0];
+    setPast((p) => [...p, days]);
+    setFuture((f) => f.slice(1));
+    setDays(next);
+    showToast('Redid change');
+  }, [future, days, showToast]);
+
+  // ---- drag / resize -------------------------------------------------
+  const handleDragStart = useCallback(
+    (id: string) => {
+      const found = findBlock(id);
+      if (!found) return;
+      setDragId(id);
+      setDragCtx({ id, date: found.date, durationMin: found.block.durationMin });
+      const others = (days[found.date] ?? []).filter((b) => b.id !== id);
+      setMagnetEdges(
+        others.flatMap((b) => [b.startMin, b.startMin + b.durationMin - found.block.durationMin]),
+      );
+    },
+    [findBlock, days],
+  );
+
+  const handleDragPreview = useCallback(
+    (id: string, startMin: number) => {
+      setGhost((g) => {
+        if (!dragCtx || dragCtx.id !== id) return g;
+        return { blockId: id, date: dragCtx.date, startMin, durationMin: dragCtx.durationMin };
+      });
+    },
+    [dragCtx],
+  );
+
+  const handleDragEnd = useCallback(
+    (id: string, snappedStart: number) => {
+      const ctx = dragCtx;
+      setGhost(null);
+      setDragId(null);
+      setDragCtx(null);
+      setMagnetEdges([]);
+      if (!ctx || ctx.id !== id) return;
+      const list = days[ctx.date] ?? [];
+      const orig = list.find((b) => b.id === id);
+      if (!orig) return;
+      const moved: Block = { ...orig, startMin: clamp(snap5(snappedStart), 0, 24 * 60 - orig.durationMin) };
+      if (moved.startMin === orig.startMin) return;
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      const shifted = autoShiftBlocks(list, moved);
+      if (!shifted) {
+        const conflict = list.find((b) => b.id !== id && overlaps(moved, b));
+        if (conflict) {
+          setSwapSheet({ moved, origStart: orig.startMin, date: ctx.date, conflict });
+        } else {
+          showToast('No room to move there');
+        }
+        return;
+      }
+      const changed = shifted.some(
+        (b) => b.id !== id && (list.find((x) => x.id === b.id)?.startMin ?? -1) !== b.startMin,
+      );
+      commit({ ...days, [ctx.date]: shifted }, `Moved "${moved.title}"`, changed);
+    },
+    [dragCtx, days, commit, showToast],
+  );
+
+  const handleResizeStart = useCallback(
+    (id: string) => {
+      const found = findBlock(id);
+      if (!found) return;
+      setResizeCtx({ id, date: found.date });
+      setDragId(id);
+    },
+    [findBlock],
+  );
+
+  const handleResizePreview = useCallback(
+    (id: string, durationMin: number) => {
+      setGhost((g) => {
+        if (!resizeCtx || resizeCtx.id !== id) return g;
+        const found = findBlock(id);
+        if (!found) return g;
+        return { blockId: id, date: found.date, startMin: found.block.startMin, durationMin };
+      });
+    },
+    [resizeCtx, findBlock],
+  );
+
+  const handleResizeEnd = useCallback(
+    (id: string, durationMin: number) => {
+      const ctx = resizeCtx;
+      setGhost(null);
+      setDragId(null);
+      setResizeCtx(null);
+      if (!ctx || ctx.id !== id) return;
+      const list = days[ctx.date] ?? [];
+      const orig = list.find((b) => b.id === id);
+      if (!orig || durationMin === orig.durationMin) return;
+      const moved: Block = { ...orig, durationMin };
+      const shifted = autoShiftBlocks(list, moved);
+      if (!shifted) {
+        showToast('No room to grow here — neighbours are in the way');
+        return;
+      }
+      const changed = shifted.some(
+        (b) => b.id !== id && (list.find((x) => x.id === b.id)?.startMin ?? -1) !== b.startMin,
+      );
+      commit({ ...days, [ctx.date]: shifted }, `Resized "${moved.title}"`, changed);
+    },
+    [resizeCtx, days, commit, showToast],
+  );
+
+  const handleDragCancel = useCallback(() => {
+    setGhost(null);
+    setDragId(null);
+    setDragCtx(null);
+    setResizeCtx(null);
+    setMagnetEdges([]);
+    setScrollEnabled(true);
+  }, []);
+
+  // ---- select / tap --------------------------------------------------
+  const handleLongPressBlock = useCallback((id: string) => {
+    void Haptics.selectionAsync();
+    setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+  }, []);
+
+  const openCreate = useCallback((date: string, startMin: number) => {
+    setQcTitle('');
+    setQcCategoryId(DEFAULT_CATEGORIES[0].id);
+    setQcDuration(DEFAULT_DURATION_MIN);
+    setQuick({ mode: 'create', date, startMin });
+  }, []);
+
+  const openEdit = useCallback((block: Block, date: string) => {
+    setQcTitle(block.title);
+    setQcCategoryId(block.categoryId);
+    setQcDuration(block.durationMin);
+    setQuick({ mode: 'edit', date, block });
+  }, []);
+
+  const handleTapBlock = useCallback(
+    (id: string) => {
+      if (selecting) {
+        setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+        return;
+      }
+      const found = findBlock(id);
+      if (found) openEdit(found.block, found.date);
+    },
+    [selecting, findBlock, openEdit],
+  );
+
+  const handleBackgroundLongPress = useCallback(
+    (x: number, y: number) => {
+      const colIdx = clamp(Math.floor((x - GUTTER) / colW), 0, visibleDates.length - 1);
+      const date = dateKey(visibleDates[colIdx]);
+      const startMin = clamp(Math.floor((y / hourHeightRef.current) * 60 / 5) * 5, 0, 24 * 60 - 25);
+      const list = days[date] ?? [];
+      const hit = list.some((b) => startMin >= b.startMin && startMin < b.startMin + b.durationMin);
+      if (hit) return; // block's own long-press handles it
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      openCreate(date, startMin);
+    },
+    [colW, visibleDates, days, openCreate],
+  );
+
+  // ---- quick create / edit sheet -------------------------------------
+  const saveQuick = useCallback(() => {
+    if (!quick) return;
+    const title = qcTitle.trim() || categoryById(qcCategoryId).name;
+    if (quick.mode === 'create') {
+      const block: Block = {
+        id: newId(),
+        categoryId: qcCategoryId,
+        title,
+        startMin: quick.startMin,
+        durationMin: qcDuration,
+      };
+      const list = days[quick.date] ?? [];
+      const merged = autoShiftBlocks(list, block);
+      if (!merged) {
+        showToast('That slot is full — pick another time');
+        return;
+      }
+      setQuick(null);
+      commit({ ...days, [quick.date]: merged }, `Created "${title}"`);
+      return;
+    }
+    const updated: Block = {
+      ...quick.block,
+      categoryId: qcCategoryId,
+      title,
+      durationMin: qcDuration,
+    };
+    const list = days[quick.date] ?? [];
+    const merged = autoShiftBlocks(list, updated);
+    if (!merged) {
+      showToast('No room for that size here');
+      return;
+    }
+    setQuick(null);
+    commit({ ...days, [quick.date]: merged }, `Edited "${title}"`);
+  }, [quick, qcTitle, qcCategoryId, qcDuration, days, commit, showToast]);
+
+  const deleteQuickBlock = useCallback(() => {
+    if (!quick || quick.mode !== 'edit') return;
+    const list = (days[quick.date] ?? []).filter((b) => b.id !== quick.block.id);
+    setQuick(null);
+    commit({ ...days, [quick.date]: list }, `Deleted "${quick.block.title}"`);
+  }, [quick, days, commit]);
+
+  // ---- multi-select actions ------------------------------------------
+  const duplicateSelected = useCallback(() => {
+    let next = { ...days };
+    let added = 0;
+    for (const id of selected) {
+      const found = findBlock(id);
+      if (!found) continue;
+      const list = next[found.date] ?? [];
+      const copy: Block = {
+        ...found.block,
+        id: newId(),
+        title: `${found.block.title} (copy)`,
+      };
+      let merged = autoShiftBlocks(list, { ...copy, startMin: found.block.startMin + found.block.durationMin });
+      if (!merged) {
+        const slot = earliestEmptySlot(list, found.block.startMin + found.block.durationMin, copy.durationMin);
+        if (slot === null) continue;
+        merged = autoShiftBlocks(list, { ...copy, startMin: slot });
+      }
+      if (!merged) continue;
+      next = { ...next, [found.date]: merged };
+      added += 1;
+    }
+    if (added === 0) {
+      showToast('No room to duplicate');
+      return;
+    }
+    setSelected([]);
+    commit(next, `Duplicated ${added} block${added > 1 ? 's' : ''}`);
+  }, [selected, days, findBlock, commit, showToast]);
+
+  const copySelected = useCallback(() => {
+    const items: ClipboardItem[] = [];
+    for (const id of selected) {
+      const found = findBlock(id);
+      if (found) {
+        items.push({
+          categoryId: found.block.categoryId,
+          title: found.block.title,
+          startMin: found.block.startMin,
+          durationMin: found.block.durationMin,
+        });
+      }
+    }
+    if (items.length === 0) return;
+    setClipboard(items);
+    setSelected([]);
+    showToast(`Copied ${items.length} block${items.length > 1 ? 's' : ''} — paste to another day`);
+  }, [selected, findBlock, showToast]);
+
+  const pasteClipboard = useCallback(() => {
+    if (clipboard.length === 0) return;
+    let next = { ...days };
+    let added = 0;
+    let skipped = 0;
+    for (const item of clipboard) {
+      const list = next[anchorKey] ?? [];
+      const block: Block = { ...item, id: newId() };
+      const merged = autoShiftBlocks(list, block);
+      if (!merged) {
+        skipped += 1;
+        continue;
+      }
+      next = { ...next, [anchorKey]: merged };
+      added += 1;
+    }
+    if (added === 0) {
+      showToast('No room to paste here');
+      return;
+    }
+    commit(next, `Pasted ${added} block${added > 1 ? 's' : ''}${skipped > 0 ? ` (${skipped} skipped)` : ''}`);
+  }, [clipboard, days, anchorKey, commit, showToast]);
+
+  const deleteSelected = useCallback(() => {
+    const ids = new Set(selected);
+    const next: Days = {};
+    for (const [date, list] of Object.entries(days)) next[date] = list.filter((b) => !ids.has(b.id));
+    setSelected([]);
+    commit(next, `Deleted ${selected.length} block${selected.length > 1 ? 's' : ''}`);
+  }, [selected, days, commit]);
+
+  // ---- swap ------------------------------------------------------------
+  const doSwap = useCallback(() => {
+    if (!swapSheet) return;
+    const { moved, origStart, date, conflict } = swapSheet;
+    const list = days[date] ?? [];
+    const swapped: Block[] = list.map((b) =>
+      b.id === moved.id ? moved : b.id === conflict.id ? { ...conflict, startMin: origStart } : b,
+    );
+    const clash = swapped.some(
+      (a) => swapped.some((b) => b.id !== a.id && overlaps(a, b)),
+    );
+    if (clash) {
+      setSwapSheet(null);
+      showToast('Swap still clashes — move cancelled');
+      return;
+    }
+    setSwapSheet(null);
+    commit(
+      { ...days, [date]: [...swapped].sort((a, b) => a.startMin - b.startMin) },
+      `Swapped "${moved.title}" with "${conflict.title}"`,
+    );
+  }, [swapSheet, days, commit, showToast]);
+
+  // ---- templates ---------------------------------------------------------
+  const applyTemplate = useCallback(
+    (tpl: RoutineTemplateDef) => {
+      const targets =
+        templateTarget === 'day'
+          ? [anchorKey]
+          : visibleDates.map((d) => dateKey(d));
+      let next = { ...days };
+      let added = 0;
+      let skipped = 0;
+      for (const date of targets) {
+        let list = next[date] ?? [];
+        for (const t of tpl.blocks) {
+          const block: Block = { id: newId(), categoryId: t.categoryId, title: t.title, startMin: t.startMin, durationMin: t.durationMin };
+          const merged = autoShiftBlocks(list, block);
+          if (!merged) {
+            skipped += 1;
+            continue;
+          }
+          list = merged;
+          added += 1;
+        }
+        next = { ...next, [date]: list };
+      }
+      setTemplateSheet(false);
+      if (added === 0) {
+        showToast('No room to apply this template');
+        return;
+      }
+      commit(next, `Applied "${tpl.name}"${skipped > 0 ? ` (${skipped} skipped)` : ''}`);
+    },
+    [templateTarget, anchorKey, visibleDates, days, commit, showToast],
+  );
+
+  // ---- inline dock (no Dock.tsx / RadialMenu.tsx yet) --------------------
+  const dockCreate = useCallback(
+    (cat: Category) => {
+      const list = days[anchorKey] ?? [];
+      const fromMin = anchorKey === todayKey ? nowMin : 0;
+      const slot = earliestEmptySlot(list, fromMin, DEFAULT_DURATION_MIN);
+      if (slot === null) {
+        showToast('No empty 25-min slot left today');
+        return;
+      }
+      const block: Block = {
+        id: newId(),
+        categoryId: cat.id,
+        title: cat.name,
+        startMin: slot,
+        durationMin: DEFAULT_DURATION_MIN,
+      };
+      const merged = autoShiftBlocks(list, block) ?? [...list, block].sort((a, b) => a.startMin - b.startMin);
+      commit({ ...days, [anchorKey]: merged }, `Added ${cat.name} at ${minToTime(slot)}`);
+    },
+    [days, anchorKey, todayKey, nowMin, commit, showToast],
+  );
+
+  // ---- gestures: pinch zoom + two-finger day swipe -----------------------
+  const pinch = Gesture.Pinch()
+    .onBegin(() => {
+      baseH.value = hourHeightRef.current;
+      lastPinchH.value = hourHeightRef.current;
+    })
+    .onUpdate((e) => {
+      const v = Math.round(clamp(baseH.value * e.scale, MIN_HOUR_H, MAX_HOUR_H) / 2) * 2;
+      if (v !== lastPinchH.value) {
+        lastPinchH.value = v;
+        runOnJS(setHourHeight)(v);
+      }
+    });
+
+  const twoFinger = Gesture.Pan()
+    .minPointers(2)
+    .maxPointers(2)
+    .onEnd((e) => {
+      if (e.translationX < -60) runOnJS(step)(1);
+      else if (e.translationX > 60) runOnJS(step)(-1);
+    });
+
+  const outerGestures = Gesture.Simultaneous(pinch, twoFinger);
+
+  const backgroundLongPress = Gesture.LongPress()
+    .minDuration(450)
+    .onStart((e) => {
+      runOnJS(handleBackgroundLongPress)(e.x, e.y);
+    });
+
+  // ---- render helpers ----------------------------------------------------
+  const stripDates = Array.from({ length: 7 }, (_, i) => addDays(anchor, i - 3));
+  const contentHeight = HOURS * hourHeight;
+
+  const renderHourRows = () => {
+    const rows = [];
+    for (let h = 0; h < HOURS; h++) {
+      rows.push(
+        <View key={h} style={[styles.hourRow, { height: hourHeight }]}>
+          <View style={styles.hourLabelWrap}>
+            <Text style={styles.hourLabel}>{minToTime(h * 60)}</Text>
+          </View>
+          <View style={styles.hourLine} />
+        </View>,
+      );
+    }
+    return rows;
+  };
+
+  const renderBlocks = () =>
+    visibleDates.map((date, colIdx) => {
+      const key = dateKey(date);
+      const list = days[key] ?? [];
+      return list.map((block) => {
+        const top = (block.startMin / 60) * hourHeight;
+        const height = Math.max(28, (block.durationMin / 60) * hourHeight);
+        return (
+          <BlockCard
+            key={`${key}-${block.id}`}
+            block={block}
+            top={top}
+            left={GUTTER + colIdx * colW + 4}
+            width={colW - 8}
+            height={height}
+            hourHeight={hourHeight}
+            magnetEdges={magnetEdges}
+            selected={selected.includes(block.id)}
+            dragging={dragId === block.id}
+            onInteractionStart={() => setScrollEnabled(false)}
+            onInteractionEnd={() => setScrollEnabled(true)}
+            onDragStart={handleDragStart}
+            onDragPreview={handleDragPreview}
+            onDragEnd={handleDragEnd}
+            onResizeStart={handleResizeStart}
+            onResizePreview={handleResizePreview}
+            onResizeEnd={handleResizeEnd}
+            onLongPressBlock={handleLongPressBlock}
+            onTapBlock={handleTapBlock}
+            onDragCancel={handleDragCancel}
+          />
+        );
+      });
+    });
+
+  const renderNowLine = () => {
+    const colIdx = visibleDates.findIndex((d) => dateKey(d) === todayKey);
+    if (colIdx < 0) return null;
+    const top = (nowMin / 60) * hourHeight;
+    return (
+      <View
+        pointerEvents="none"
+        style={[styles.nowLine, { top, left: GUTTER + colIdx * colW, width: colW }]}
+      >
+        <View style={styles.nowPin} />
+        <Text style={styles.nowLabel}>{minToTime(nowMin)}</Text>
+      </View>
+    );
+  };
+
+  const renderGhost = () => {
+    if (!ghost) return null;
+    const colIdx = visibleDates.findIndex((d) => dateKey(d) === ghost.date);
+    if (colIdx < 0) return null;
+    const top = (ghost.startMin / 60) * hourHeight;
+    const height = Math.max(28, (ghost.durationMin / 60) * hourHeight);
+    const category = categoryById(ghost.blockId ? (findBlock(ghost.blockId)?.block.categoryId ?? 'cat-custom') : 'cat-custom');
+    const bg = `${categoryColorHex[category.color]}66`;
+    return (
+      <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }}>
+        <View
+          style={[
+            styles.ghost,
+            {
+              top,
+              left: GUTTER + colIdx * colW + 4,
+              width: colW - 8,
+              height,
+              backgroundColor: bg,
+            },
+          ]}
+        />
+        <View
+          style={[
+            styles.tooltip,
+            {
+              top: Math.max(2, top - 30),
+              left: clamp(GUTTER + colIdx * colW + 4, 4, width - 130),
+            },
+          ]}
+        >
+          <Text style={styles.tooltipText}>
+            {minToTime(ghost.startMin)} – {minToTime(ghost.startMin + ghost.durationMin)}
+          </Text>
+        </View>
+      </View>
+    );
+  };
+
+  return (
+    <GestureHandlerRootView style={styles.root}>
+      <View style={[styles.container, { paddingTop: insets.top }]}>
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.monthTitle}>
+            {MONTHS[anchor.getMonth()]} {anchor.getFullYear()}
+          </Text>
+          <View style={styles.headerActions}>
+            <Pressable onPress={undo} disabled={past.length === 0} style={styles.iconBtn}>
+              <Text style={[styles.iconBtnText, past.length === 0 && styles.disabledText]}>Undo</Text>
+            </Pressable>
+            <Pressable onPress={redo} disabled={future.length === 0} style={styles.iconBtn}>
+              <Text style={[styles.iconBtnText, future.length === 0 && styles.disabledText]}>Redo</Text>
+            </Pressable>
+            <Pressable onPress={() => setAnchor(new Date())} style={styles.todayBtn}>
+              <Text style={styles.todayBtnText}>Today</Text>
+            </Pressable>
+          </View>
+        </View>
+
+        {/* View switcher + prev/next */}
+        <View style={styles.controlsRow}>
+          <Pressable onPress={() => step(-1)} style={styles.navBtn} accessibilityLabel="Previous">
+            <Text style={styles.navBtnText}>‹</Text>
+          </Pressable>
+          <View style={styles.segmented}>
+            {(['day', '3day', 'week'] as ViewMode[]).map((m) => (
+              <Pressable
+                key={m}
+                onPress={() => setView(m)}
+                style={[styles.segment, view === m && styles.segmentActive]}
+              >
+                <Text style={[styles.segmentText, view === m && styles.segmentTextActive]}>
+                  {m === 'day' ? 'Day' : m === '3day' ? '3-Day' : 'Week'}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+          <Pressable onPress={() => step(1)} style={styles.navBtn} accessibilityLabel="Next">
+            <Text style={styles.navBtnText}>›</Text>
+          </Pressable>
+          <Pressable onPress={() => setTemplateSheet(true)} style={styles.applyBtn}>
+            <Text style={styles.applyBtnText}>Apply to…</Text>
+          </Pressable>
+          {clipboard.length > 0 && (
+            <Pressable onPress={pasteClipboard} style={styles.pasteBtn}>
+              <Text style={styles.pasteBtnText}>Paste ({clipboard.length})</Text>
+            </Pressable>
+          )}
+        </View>
+
+        {/* Date strip */}
+        <View style={styles.strip}>
+          {stripDates.map((d) => {
+            const key = dateKey(d);
+            const isAnchor = key === anchorKey;
+            const isToday = key === todayKey;
+            return (
+              <Pressable key={key} onPress={() => setAnchor(d)} style={styles.stripItem}>
+                <Text style={styles.stripWeekday}>{WEEKDAYS[d.getDay()].toUpperCase()}</Text>
+                <View style={[styles.stripDay, isAnchor && styles.stripDayActive, isToday && !isAnchor && styles.stripDayToday]}>
+                  <Text style={[styles.stripDayText, isAnchor && styles.stripDayTextActive]}>{d.getDate()}</Text>
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        {/* Hour grid */}
+        <GestureDetector gesture={outerGestures}>
+          <ScrollView
+            ref={scrollRef}
+            style={styles.gridScroll}
+            scrollEnabled={scrollEnabled}
+            showsVerticalScrollIndicator={false}
+          >
+            <GestureDetector gesture={backgroundLongPress}>
+              <View style={{ width: width, height: contentHeight }}>
+                {renderHourRows()}
+                {visibleDates.map((_, i) => (
+                  <View
+                    key={`sep-${i}`}
+                    pointerEvents="none"
+                    style={[styles.colSep, { left: GUTTER + i * colW, height: contentHeight }]}
+                  />
+                ))}
+                {renderBlocks()}
+                {renderNowLine()}
+                {renderGhost()}
+              </View>
+            </GestureDetector>
+          </ScrollView>
+        </GestureDetector>
+
+        {/* Multi-select bar */}
+        {selecting && (
+          <View style={styles.selectBar}>
+            <Text style={styles.selectCount}>{selected.length} selected</Text>
+            <Pressable onPress={duplicateSelected} style={styles.selectAction}>
+              <Text style={styles.selectActionText}>Duplicate</Text>
+            </Pressable>
+            <Pressable onPress={copySelected} style={styles.selectAction}>
+              <Text style={styles.selectActionText}>Copy</Text>
+            </Pressable>
+            <Pressable onPress={deleteSelected} style={[styles.selectAction, styles.selectDelete]}>
+              <Text style={styles.selectActionText}>Delete</Text>
+            </Pressable>
+            <Pressable onPress={() => setSelected([])} style={styles.selectAction}>
+              <Text style={styles.selectActionText}>Done</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {/* Inline dock (stand-in for Dock.tsx / RadialMenu.tsx) */}
+        <View style={[styles.dockWrap, { paddingBottom: Math.max(insets.bottom, spacing.sm) }]}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dock}>
+            {DEFAULT_CATEGORIES.map((cat) => (
+              <Pressable key={cat.id} onPress={() => dockCreate(cat)} style={styles.dockChip}>
+                <View style={[styles.dockDot, { backgroundColor: categoryColorHex[cat.color] }]} />
+                <Text style={styles.dockChipText}>{cat.name}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+          <Text style={styles.dockHint}>Tap a category to add a 25-min block in the earliest free slot</Text>
+        </View>
+
+        {toast && (
+          <View style={[styles.toast, { bottom: 120 }]}>
+            <Text style={styles.toastText}>{toast}</Text>
+          </View>
+        )}
+
+        {/* Quick create / edit sheet */}
+        <Modal visible={quick !== null} transparent animationType="slide" onRequestClose={() => setQuick(null)}>
+          <Pressable style={styles.sheetBackdrop} onPress={() => setQuick(null)}>
+            <Pressable style={styles.sheet} onPress={() => undefined}>
+              <View style={styles.sheetHandle} />
+              <Text style={styles.sheetTitle}>
+                {quick?.mode === 'edit' ? 'Edit block' : `New block · ${quick ? minToTime(quick.startMin) : ''}`}
+              </Text>
+              <TextInput
+                value={qcTitle}
+                onChangeText={setQcTitle}
+                placeholder="Block title"
+                placeholderTextColor={faintText}
+                style={styles.input}
+              />
+              <Text style={styles.sheetLabel}>Category</Text>
+              <View style={styles.chipWrap}>
+                {DEFAULT_CATEGORIES.map((cat) => {
+                  const active = qcCategoryId === cat.id;
+                  return (
+                    <Pressable
+                      key={cat.id}
+                      onPress={() => setQcCategoryId(cat.id)}
+                      style={[styles.catChip, active && styles.catChipActive]}
+                    >
+                      <View style={[styles.dockDot, { backgroundColor: categoryColorHex[cat.color] }]} />
+                      <Text style={[styles.catChipText, active && styles.catChipTextActive]}>{cat.name}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <Text style={styles.sheetLabel}>Duration · {qcDuration} min</Text>
+              <View style={styles.durationRow}>
+                {[15, 25, 45, 60].map((d) => (
+                  <Pressable
+                    key={d}
+                    onPress={() => setQcDuration(d)}
+                    style={[styles.durationChip, qcDuration === d && styles.durationChipActive]}
+                  >
+                    <Text style={[styles.durationText, qcDuration === d && styles.durationTextActive]}>{d}m</Text>
+                  </Pressable>
+                ))}
+                <Pressable onPress={() => setQcDuration((v) => clamp(v - 5, 10, 240))} style={styles.stepper}>
+                  <Text style={styles.stepperText}>−</Text>
+                </Pressable>
+                <Pressable onPress={() => setQcDuration((v) => clamp(v + 5, 10, 240))} style={styles.stepper}>
+                  <Text style={styles.stepperText}>+</Text>
+                </Pressable>
+              </View>
+              <Pressable onPress={saveQuick} style={styles.saveBtn}>
+                <Text style={styles.saveBtnText}>{quick?.mode === 'edit' ? 'Save changes' : 'Add block'}</Text>
+              </Pressable>
+              {quick?.mode === 'edit' && (
+                <Pressable onPress={deleteQuickBlock} style={styles.deleteBtn}>
+                  <Text style={styles.deleteBtnText}>Delete block</Text>
+                </Pressable>
+              )}
+            </Pressable>
+          </Pressable>
+        </Modal>
+
+        {/* Scope sheet — shown on every change */}
+        <Modal visible={scopeSheet !== null} transparent animationType="slide" onRequestClose={() => setScopeSheet(null)}>
+          <Pressable style={styles.sheetBackdrop} onPress={() => setScopeSheet(null)}>
+            <Pressable style={styles.sheet} onPress={() => undefined}>
+              <View style={styles.sheetHandle} />
+              <Text style={styles.sheetTitle}>Apply this change to…</Text>
+              {scopeSheet && <Text style={styles.sheetSub}>{scopeSheet.description}</Text>}
+              <Text style={styles.sheetNote}>
+                Last scope: {SCOPE_LABELS[lastScope]}. Template propagation is wired to the store once it lands.
+              </Text>
+              {(['today', 'onwards'] as Scope[]).map((s) => (
+                <Pressable
+                  key={s}
+                  onPress={() => {
+                    setLastScope(s);
+                    setScopeSheet(null);
+                    showToast(`Saved · ${SCOPE_LABELS[s]}`);
+                  }}
+                  style={styles.scopeRow}
+                >
+                  <Text style={styles.scopeRowText}>{SCOPE_LABELS[s]}</Text>
+                </Pressable>
+              ))}
+              {!scopeMore ? (
+                <Pressable onPress={() => setScopeMore(true)} style={styles.scopeRow}>
+                  <Text style={styles.scopeRowText}>More…</Text>
+                </Pressable>
+              ) : (
+                <Pressable
+                  onPress={() => {
+                    setLastScope('weekday');
+                    setScopeSheet(null);
+                    showToast(`Saved · ${SCOPE_LABELS.weekday}`);
+                  }}
+                  style={styles.scopeRow}
+                >
+                  <Text style={styles.scopeRowText}>{SCOPE_LABELS.weekday}</Text>
+                </Pressable>
+              )}
+            </Pressable>
+          </Pressable>
+        </Modal>
+
+        {/* Swap sheet — when a drop cannot auto-shift */}
+        <Modal visible={swapSheet !== null} transparent animationType="slide" onRequestClose={() => setSwapSheet(null)}>
+          <Pressable style={styles.sheetBackdrop} onPress={() => setSwapSheet(null)}>
+            <Pressable style={styles.sheet} onPress={() => undefined}>
+              <View style={styles.sheetHandle} />
+              <Text style={styles.sheetTitle}>No room to shift</Text>
+              {swapSheet && (
+                <Text style={styles.sheetSub}>
+                  “{swapSheet.moved.title}” cannot fit at {minToTime(swapSheet.moved.startMin)} without pushing “
+                  {swapSheet.conflict.title}” past midnight. Swap their times instead?
+                </Text>
+              )}
+              <Pressable onPress={doSwap} style={styles.saveBtn}>
+                <Text style={styles.saveBtnText}>Swap times</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  setSwapSheet(null);
+                  showToast('Move cancelled');
+                }}
+                style={styles.deleteBtn}
+              >
+                <Text style={styles.deleteBtnText}>Keep as it was</Text>
+              </Pressable>
+            </Pressable>
+          </Pressable>
+        </Modal>
+
+        {/* Routine template picker */}
+        <Modal visible={templateSheet} transparent animationType="slide" onRequestClose={() => setTemplateSheet(false)}>
+          <Pressable style={styles.sheetBackdrop} onPress={() => setTemplateSheet(false)}>
+            <Pressable style={styles.sheet} onPress={() => undefined}>
+              <View style={styles.sheetHandle} />
+              <Text style={styles.sheetTitle}>Apply a routine</Text>
+              <View style={styles.segmented}>
+                {(['day', 'visible'] as const).map((t) => (
+                  <Pressable
+                    key={t}
+                    onPress={() => setTemplateTarget(t)}
+                    style={[styles.segment, templateTarget === t && styles.segmentActive]}
+                  >
+                    <Text style={[styles.segmentText, templateTarget === t && styles.segmentTextActive]}>
+                      {t === 'day' ? 'This day' : 'All visible days'}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+              {ROUTINE_TEMPLATES.map((tpl) => (
+                <Pressable key={tpl.id} onPress={() => applyTemplate(tpl)} style={styles.templateRow}>
+                  <View style={styles.templateDot}>
+                    <Text style={styles.templateKind}>{tpl.kind}</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.templateName}>{tpl.name}</Text>
+                    <Text style={styles.templateBlurb}>{tpl.blurb}</Text>
+                  </View>
+                </Pressable>
+              ))}
+            </Pressable>
+          </Pressable>
+        </Modal>
+      </View>
+    </GestureHandlerRootView>
+  );
+}
+
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: colors.cloud },
+  container: { flex: 1, backgroundColor: colors.cloud },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+  },
+  monthTitle: { fontFamily: fonts.semibold, fontSize: 26, color: colors.carbon },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  iconBtn: { paddingHorizontal: 8, paddingVertical: 6 },
+  iconBtnText: { fontFamily: fonts.medium, fontSize: 14, color: colors.carbon },
+  disabledText: { color: faintText },
+  todayBtn: {
+    backgroundColor: colors.carbon,
+    borderRadius: radii.pill,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    marginLeft: 4,
+  },
+  todayBtnText: { fontFamily: fonts.medium, fontSize: 13, color: colors.paper },
+  controlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+    gap: 6,
+  },
+  navBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: hairline,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.paper,
+  },
+  navBtnText: { fontFamily: fonts.semibold, fontSize: 20, color: colors.carbon, lineHeight: 22 },
+  segmented: {
+    flexDirection: 'row',
+    backgroundColor: colors.paper,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: hairline,
+    padding: 3,
+    gap: 2,
+  },
+  segment: { borderRadius: radii.pill, paddingHorizontal: 12, paddingVertical: 6 },
+  segmentActive: { backgroundColor: colors.carbon },
+  segmentText: { fontFamily: fonts.medium, fontSize: 13, color: colors.carbon },
+  segmentTextActive: { color: colors.paper },
+  applyBtn: {
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: hairline,
+    backgroundColor: colors.paper,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  applyBtnText: { fontFamily: fonts.medium, fontSize: 13, color: colors.carbon },
+  pasteBtn: {
+    borderRadius: radii.pill,
+    backgroundColor: colors.butter,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  pasteBtnText: { fontFamily: fonts.medium, fontSize: 13, color: colors.carbon },
+  strip: {
+    flexDirection: 'row',
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.sm,
+  },
+  stripItem: { flex: 1, alignItems: 'center', gap: 4 },
+  stripWeekday: { fontFamily: fonts.medium, fontSize: 10, color: faintText },
+  stripDay: {
+    width: 34,
+    height: 34,
+    borderRadius: radii.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stripDayActive: { backgroundColor: colors.carbon },
+  stripDayToday: { borderWidth: 1, borderColor: colors.carbon },
+  stripDayText: { fontFamily: fonts.semibold, fontSize: 15, color: colors.carbon },
+  stripDayTextActive: { color: colors.paper },
+  gridScroll: { flex: 1 },
+  hourRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  hourLabelWrap: { width: GUTTER, alignItems: 'center', paddingTop: 2 },
+  hourLabel: { fontFamily: fonts.regular, fontSize: 11, color: faintText },
+  hourLine: { flex: 1, borderTopWidth: 1, borderTopColor: hairline },
+  colSep: { position: 'absolute', top: 0, width: 1, backgroundColor: hairline },
+  nowLine: {
+    position: 'absolute',
+    height: 2,
+    backgroundColor: colors.carbon,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  nowPin: {
+    position: 'absolute',
+    left: -5,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: colors.carbon,
+  },
+  nowLabel: {
+    position: 'absolute',
+    left: 10,
+    top: -18,
+    fontFamily: fonts.medium,
+    fontSize: 11,
+    color: colors.paper,
+    backgroundColor: colors.carbon,
+    borderRadius: radii.pill,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    overflow: 'hidden',
+  },
+  ghost: { position: 'absolute', borderRadius: 12, borderWidth: 2, borderColor: colors.carbon, borderStyle: 'dashed' },
+  tooltip: {
+    position: 'absolute',
+    backgroundColor: colors.carbon,
+    borderRadius: radii.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  tooltipText: { fontFamily: fonts.medium, fontSize: 12, color: colors.paper },
+  selectBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginHorizontal: spacing.md,
+    marginTop: spacing.sm,
+    backgroundColor: colors.carbon,
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+  },
+  selectCount: { fontFamily: fonts.medium, fontSize: 13, color: colors.paper, flex: 1 },
+  selectAction: { paddingHorizontal: 8, paddingVertical: 4 },
+  selectActionText: { fontFamily: fonts.medium, fontSize: 13, color: colors.paper },
+  selectDelete: { backgroundColor: colors.orchid, borderRadius: radii.pill },
+  dockWrap: { paddingTop: spacing.sm, paddingHorizontal: spacing.md },
+  dock: { gap: 8, paddingRight: spacing.md },
+  dockChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.paper,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: hairline,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  dockDot: { width: 10, height: 10, borderRadius: 5 },
+  dockChipText: { fontFamily: fonts.medium, fontSize: 13, color: colors.carbon },
+  dockHint: {
+    fontFamily: fonts.regular,
+    fontSize: 11,
+    color: faintText,
+    textAlign: 'center',
+    paddingTop: 6,
+  },
+  toast: {
+    position: 'absolute',
+    alignSelf: 'center',
+    backgroundColor: colors.carbon,
+    borderRadius: radii.pill,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  toastText: { fontFamily: fonts.medium, fontSize: 13, color: colors.paper },
+  sheetBackdrop: { flex: 1, backgroundColor: 'rgba(10,10,10,0.35)', justifyContent: 'flex-end' },
+  sheet: {
+    backgroundColor: colors.paper,
+    borderTopLeftRadius: radii.sheet,
+    borderTopRightRadius: radii.sheet,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xl,
+    gap: 10,
+  },
+  sheetHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: hairline,
+    alignSelf: 'center',
+    marginBottom: 4,
+  },
+  sheetTitle: { fontFamily: fonts.semibold, fontSize: 20, color: colors.carbon },
+  sheetSub: { fontFamily: fonts.regular, fontSize: 14, color: colors.carbon, lineHeight: 20 },
+  sheetNote: { fontFamily: fonts.regular, fontSize: 12, color: faintText, lineHeight: 17 },
+  sheetLabel: { fontFamily: fonts.medium, fontSize: 13, color: colors.carbon, marginTop: 4 },
+  input: {
+    borderWidth: 1,
+    borderColor: hairline,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontFamily: fonts.regular,
+    fontSize: 15,
+    color: colors.carbon,
+    backgroundColor: colors.cloud,
+  },
+  chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  catChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: hairline,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+  },
+  catChipActive: { backgroundColor: colors.carbon, borderColor: colors.carbon },
+  catChipText: { fontFamily: fonts.medium, fontSize: 13, color: colors.carbon },
+  catChipTextActive: { color: colors.paper },
+  durationRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  durationChip: {
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: hairline,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  durationChipActive: { backgroundColor: colors.carbon, borderColor: colors.carbon },
+  durationText: { fontFamily: fonts.medium, fontSize: 13, color: colors.carbon },
+  durationTextActive: { color: colors.paper },
+  stepper: {
+    width: 34,
+    height: 34,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: hairline,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepperText: { fontFamily: fonts.semibold, fontSize: 18, color: colors.carbon },
+  saveBtn: {
+    backgroundColor: colors.carbon,
+    borderRadius: radii.pill,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  saveBtnText: { fontFamily: fonts.semibold, fontSize: 15, color: colors.paper },
+  deleteBtn: { paddingVertical: 10, alignItems: 'center' },
+  deleteBtnText: { fontFamily: fonts.medium, fontSize: 14, color: colors.orchid },
+  scopeRow: {
+    borderWidth: 1,
+    borderColor: hairline,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+  },
+  scopeRowText: { fontFamily: fonts.medium, fontSize: 15, color: colors.carbon },
+  templateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1,
+    borderColor: hairline,
+    borderRadius: 16,
+    padding: 14,
+  },
+  templateDot: {
+    backgroundColor: colors.butter,
+    borderRadius: radii.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  templateKind: { fontFamily: fonts.medium, fontSize: 11, color: colors.carbon },
+  templateName: { fontFamily: fonts.semibold, fontSize: 15, color: colors.carbon },
+  templateBlurb: { fontFamily: fonts.regular, fontSize: 12, color: faintText, marginTop: 2 },
+});

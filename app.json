@@ -1,30 +1,54 @@
 {
   "expo": {
-    "name": "takt-app",
-    "slug": "takt-app",
-    "version": "1.0.0",
-    "orientation": "portrait",
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#F6F5F2",
+        "foregroundImage": "./assets/adaptive-icon.png"
+      },
+      "package": "com.takt.app",
+      "permissions": [
+        "POST_NOTIFICATIONS",
+        "SCHEDULE_EXACT_ALARM",
+        "RECEIVE_BOOT_COMPLETED",
+        "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+        "VIBRATE",
+        "USE_FULL_SCREEN_INTENT"
+      ],
+      "predictiveBackGestureEnabled": false,
+      "versionCode": 1
+    },
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true
     },
-    "android": {
-      "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
-      },
-      "predictiveBackGestureEnabled": false
-    },
-    "web": {
-      "favicon": "./assets/favicon.png"
-    },
+    "name": "Takt",
+    "orientation": "portrait",
     "plugins": [
       "expo-router",
+      [
+        "expo-notifications",
+        {
+          "color": "#0A0A0A",
+          "icon": "./assets/icon.png"
+        }
+      ],
       "expo-sqlite",
-      "expo-font"
-    ]
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#F6F5F2",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200
+        }
+      ]
+    ],
+    "scheme": "takt",
+    "slug": "takt",
+    "userInterfaceStyle": "light",
+    "version": "1.0.0",
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
   }
 }

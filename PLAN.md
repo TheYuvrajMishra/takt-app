@@ -30,3 +30,9 @@ App: routine app that nudges you until you do the thing. Name **Takt**, package 
 - `src/components/Dock.tsx`, `src/components/RadialMenu.tsx` — Worker B (shared by Today + Calendar)
 - `assets/*` — Worker E (icons, illustrations, splash)
 - `.github/workflows/build-apk.yml` — Worker E
+
+## Integration (coordinator, 2026-11-10 ~00:25 IST)
+- All 5 workers landed; tsc clean, vitest 38/38, expo-doctor 20/20, android export bundles.
+- Fixed: app.json top-level splash removed (SDK 58 schema) -> expo-splash-screen plugin; installed expo-splash-screen, expo-file-system, expo-sharing, vite (vitest peer).
+- Wired root layout: store load, initNudges + response listener, onboarding gate (redirects to /onboarding until done).
+- Known gaps (see KNOWN_ISSUES.md): Calendar/Stats run on local sample data until store wiring lands; Dock drop creates at earliest slot, not drop position; no device smoke test yet.
