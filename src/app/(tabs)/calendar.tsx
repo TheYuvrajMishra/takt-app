@@ -124,6 +124,8 @@ export default function CalendarScreen() {
   const deleteBlock = useStore((s) => s.deleteBlock);
   const undoStore = useStore((s) => s.undo);
   const redoStore = useStore((s) => s.redo);
+  const beginUndoBatch = useStore((s) => s.beginUndoBatch);
+  const endUndoBatch = useStore((s) => s.endUndoBatch);
   const undoCount = useStore((s) => s.undoStack.length);
   const redoCount = useStore((s) => s.redoStack.length);
   const lastToast = useStore((s) => s.lastToast);
@@ -270,8 +272,7 @@ export default function CalendarScreen() {
    * Apply a locally computed auto-shift result to the store. The primary
    * block moves/resizes with the chosen scope; neighbours that got pushed
    * only ever shift for today, so their template recurrences (and ids)
-   * are untouched. Note: one drag can cost several store undo entries
-   * (one per shifted block) — the store has no multi-block batch op yet.
+   * are untouched. The whole gesture is one undo entry (store undo batch).
    */
   const applyShift = useCallback(
     async (
@@ -281,28 +282,34 @@ export default function CalendarScreen() {
       primaryId: string,
       scope: Scope,
     ) => {
-      const primaryBefore = before.find((b) => b.id === primaryId);
-      const primaryAfter = shifted.find((b) => b.id === primaryId);
-      if (primaryBefore && primaryAfter) {
-        if (primaryAfter.startMin !== primaryBefore.startMin) {
-          await moveBlock(primaryId, date, primaryAfter.startMin, scope);
+      beginUndoBatch();
+      try {
+        const primaryBefore = before.find((b) => b.id === primaryId);
+        const primaryAfter = shifted.find((b) => b.id === primaryId);
+        if (primaryBefore && primaryAfter) {
+          if (primaryAfter.startMin !== primaryBefore.startMin) {
+            await moveBlock(primaryId, date, primaryAfter.startMin, scope);
+          }
+          if (primaryAfter.durationMin !== primaryBefore.durationMin) {
+            await resizeBlock(primaryId, date, primaryAfter.durationMin, scope);
+          }
         }
-        if (primaryAfter.durationMin !== primaryBefore.durationMin) {
-          await resizeBlock(primaryId, date, primaryAfter.durationMin, scope);
+        for (const b of shifted) {
+          if (b.id === primaryId) continue;
+          const orig = before.find((x) => x.id === b.id);
+          if (orig && orig.startMin !== b.startMin) {
+            await moveBlock(b.id, date, b.startMin, 'today');
+          }
         }
-      }
-      for (const b of shifted) {
-        if (b.id === primaryId) continue;
-        const orig = before.find((x) => x.id === b.id);
-        if (orig && orig.startMin !== b.startMin) {
-          await moveBlock(b.id, date, b.startMin, 'today');
-        }
+      } finally {
+        endUndoBatch();
       }
     },
-    [moveBlock, resizeBlock],
+    [moveBlock, resizeBlock, beginUndoBatch, endUndoBatch],
   );
 
-  /** Add a new block (from a locally computed shifted list) + shift neighbours. */
+  /** Add a new block (from a locally computed shifted list) + shift neighbours.
+   * One undo entry per created block (store undo batch). */
   const applyCreated = useCallback(
     async (
       date: string,
@@ -313,28 +320,21 @@ export default function CalendarScreen() {
     ) => {
       const created = shifted.find((b) => b.id === createdId);
       if (!created) return;
-      await addBlock(created, date, scope);
-      for (const b of shifted) {
-        if (b.id === createdId) continue;
-        const orig = before.find((x) => x.id === b.id);
-        if (orig && orig.startMin !== b.startMin) {
-          await moveBlock(b.id, date, b.startMin, 'today');
+      beginUndoBatch();
+      try {
+        await addBlock(created, date, scope);
+        for (const b of shifted) {
+          if (b.id === createdId) continue;
+          const orig = before.find((x) => x.id === b.id);
+          if (orig && orig.startMin !== b.startMin) {
+            await moveBlock(b.id, date, b.startMin, 'today');
+          }
         }
+      } finally {
+        endUndoBatch();
       }
     },
-    [addBlock, moveBlock],
-  );
-
-  /** After a scoped op that splits a template block (weekday scope), the
-   * block may come back with a new id — re-resolve it by start time. */
-  const resolveEditedId = useCallback(
-    (date: string, oldId: string, startMin: number): string => {
-      const list = getBlocksForDate(date);
-      if (list.some((b) => b.id === oldId)) return oldId;
-      return list.find((b) => b.startMin === startMin)?.id ?? oldId;
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [templates, dayOverrides],
+    [addBlock, moveBlock, beginUndoBatch, endUndoBatch],
   );
 
   const undo = useCallback(() => {
@@ -548,30 +548,34 @@ export default function CalendarScreen() {
     requestScope(`Edited "${title}"`, async (scope) => {
       // Category / title go through patchBlock; a duration change goes
       // through resizeBlock (which also shifts neighbours via applyShift
-      // semantics below). A weekday-scope patch splits the template
-      // block, so the resize re-resolves the block id first.
+      // semantics below). A weekday-scope split keeps the block id, so the
+      // resize uses the same id. The whole edit is one undo entry.
       const patch: Partial<
         Pick<Block, 'categoryId' | 'subcategoryId' | 'title' | 'notes' | 'doNotNudge' | 'alarmMode'>
       > = {};
       if (updated.categoryId !== orig.categoryId) patch.categoryId = updated.categoryId;
       if (updated.title !== orig.title) patch.title = updated.title;
-      if (Object.keys(patch).length > 0) {
-        await patchBlock(orig.id, date, patch, scope);
-      }
-      const mergedBlock = merged.find((b) => b.id === orig.id);
-      if (mergedBlock && mergedBlock.durationMin !== orig.durationMin) {
-        const id = resolveEditedId(date, orig.id, orig.startMin);
-        await resizeBlock(id, date, mergedBlock.durationMin, scope);
-      }
-      for (const b of merged) {
-        if (b.id === orig.id) continue;
-        const before = list.find((x) => x.id === b.id);
-        if (before && before.startMin !== b.startMin) {
-          await moveBlock(b.id, date, b.startMin, 'today');
+      beginUndoBatch();
+      try {
+        if (Object.keys(patch).length > 0) {
+          await patchBlock(orig.id, date, patch, scope);
         }
+        const mergedBlock = merged.find((b) => b.id === orig.id);
+        if (mergedBlock && mergedBlock.durationMin !== orig.durationMin) {
+          await resizeBlock(orig.id, date, mergedBlock.durationMin, scope);
+        }
+        for (const b of merged) {
+          if (b.id === orig.id) continue;
+          const before = list.find((x) => x.id === b.id);
+          if (before && before.startMin !== b.startMin) {
+            await moveBlock(b.id, date, b.startMin, 'today');
+          }
+        }
+      } finally {
+        endUndoBatch();
       }
     });
-  }, [quick, qcTitle, qcCategoryId, qcDuration, requestScope, applyCreated, patchBlock, resizeBlock, moveBlock, resolveEditedId, showToast, templates, dayOverrides]);
+  }, [quick, qcTitle, qcCategoryId, qcDuration, requestScope, applyCreated, patchBlock, resizeBlock, moveBlock, showToast, templates, dayOverrides, beginUndoBatch, endUndoBatch]);
 
   const deleteQuickBlock = useCallback(() => {
     if (!quick || quick.mode !== 'edit') return;
@@ -662,12 +666,17 @@ export default function CalendarScreen() {
     if (ids.length === 0) return;
     setSelected([]);
     requestScope(`Deleted ${ids.length} block${ids.length > 1 ? 's' : ''}`, async (scope) => {
-      for (const id of ids) {
-        const found = findBlock(id);
-        if (found) await deleteBlock(id, found.date, scope);
+      beginUndoBatch();
+      try {
+        for (const id of ids) {
+          const found = findBlock(id);
+          if (found) await deleteBlock(id, found.date, scope);
+        }
+      } finally {
+        endUndoBatch();
       }
     });
-  }, [selected, findBlock, requestScope, deleteBlock]);
+  }, [selected, findBlock, requestScope, deleteBlock, beginUndoBatch, endUndoBatch]);
 
   // ---- swap ------------------------------------------------------------
   const doSwap = useCallback(() => {
@@ -687,10 +696,15 @@ export default function CalendarScreen() {
     }
     setSwapSheet(null);
     requestScope(`Swapped "${moved.title}" with "${conflict.title}"`, async (scope) => {
-      await moveBlock(moved.id, date, moved.startMin, scope);
-      await moveBlock(conflict.id, date, origStart, scope);
+      beginUndoBatch();
+      try {
+        await moveBlock(moved.id, date, moved.startMin, scope);
+        await moveBlock(conflict.id, date, origStart, scope);
+      } finally {
+        endUndoBatch();
+      }
     });
-  }, [swapSheet, requestScope, moveBlock, showToast, templates, dayOverrides]);
+  }, [swapSheet, requestScope, moveBlock, showToast, templates, dayOverrides, beginUndoBatch, endUndoBatch]);
 
   // ---- templates ---------------------------------------------------------
   // A routine fills days with one-off blocks (scope 'today' per day), so

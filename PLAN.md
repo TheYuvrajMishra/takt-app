@@ -18,6 +18,12 @@ App: routine app that nudges you until you do the thing. Name **Takt**, package 
 - [ ] Phase 9: CI + APK (build-apk.yml, arm64-v8a, keystore in gh secrets, release `latest` / app-release.apk)
 - [ ] Phase 10: iteration cycles (target 6, cap 10) + final delivery
 
+## Phase 10 — iteration cycles (coordinator, 2026-11-10 ~01:40 IST)
+- Cycle 1 (DONE, awaiting final CI): weekday-split re-id fix — edited weekday keeps the block id, remainder re-id + completion migration in one sqlite transaction, scoped-edit/override sync, batched undo for drag/quick-edit/swap/multi-delete/create-with-shift, resolveEditedId deleted, stale-id split-chain resolution with splitFromId lineage. Tests 44 → 65, tsc clean, expo android export bundles.
+- Cycle 2 (next): Settings "Do not nudge" defaults persist (store fields + addBlock applies them).
+- Cycle 3 (was: atomic multi-block undo — DONE inside cycle 1 via begin/endUndoBatch; re-pick): TBD from remaining KNOWN_ISSUES / critic findings.
+- Remaining candidates: nudge reliability hardening + tests; accessibility + performance pass; home-screen shortcut / "now" widget if feasible; weekday-delete completion orphan in stats (open, needs a decision).
+
 ## File map (ownership — do not cross-write)
 - `src/theme/*` — tokens, fonts, grain, hatch
 - `src/types.ts`, `src/lib/core.ts` — shared types + pure logic (do not change signatures without updating all callers)

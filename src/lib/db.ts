@@ -3,6 +3,7 @@
 // Single database file: takt.db. All JSON columns are stored as strings.
 import * as SQLite from 'expo-sqlite';
 import type {
+  Block,
   Category,
   CompletionEntry,
   DayOverride,
@@ -273,6 +274,69 @@ export async function saveTemplate(template: RoutineTemplate): Promise<void> {
 export async function deleteTemplate(id: string): Promise<void> {
   const db = await getDb();
   await db.runAsync('DELETE FROM templates WHERE id = ?', id);
+}
+
+export interface CompletionRekey {
+  oldBlockId: string;
+  newBlockId: string;
+  date: string;
+}
+
+/**
+ * Atomically save a template and re-key completion rows (targeted UPDATEs,
+ * never a full-table rewrite). A crash mid-split can never leave the split
+ * persisted with the old completion keys behind. `overrideRekeys` re-keys
+ * day-override copies the same way, in the same transaction.
+ */
+export async function saveTemplateWithCompletionRekey(
+  template: RoutineTemplate,
+  rekeys: CompletionRekey[],
+  overrideRekeys: { date: string; blocks: Block[] }[] = [],
+): Promise<void> {
+  const db = await getDb();
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `INSERT INTO templates (id, name, effective_from, blocks) VALUES (?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         name = excluded.name, effective_from = excluded.effective_from, blocks = excluded.blocks`,
+      template.id,
+      template.name,
+      template.effectiveFrom,
+      JSON.stringify(template.blocks),
+    );
+    for (const r of rekeys) {
+      await db.runAsync(
+        'UPDATE completions SET block_id = ? WHERE block_id = ? AND date = ?',
+        r.newBlockId,
+        r.oldBlockId,
+        r.date,
+      );
+    }
+    for (const o of overrideRekeys) {
+      await db.runAsync(
+        `INSERT INTO day_overrides (date, blocks) VALUES (?, ?)
+         ON CONFLICT(date) DO UPDATE SET blocks = excluded.blocks`,
+        o.date,
+        JSON.stringify(o.blocks),
+      );
+    }
+  });
+}
+
+/** Targeted completion re-keying (same UPDATEs as above, no template write). */
+export async function rekeyCompletions(rekeys: CompletionRekey[]): Promise<void> {
+  if (rekeys.length === 0) return;
+  const db = await getDb();
+  await db.withTransactionAsync(async () => {
+    for (const r of rekeys) {
+      await db.runAsync(
+        'UPDATE completions SET block_id = ? WHERE block_id = ? AND date = ?',
+        r.newBlockId,
+        r.oldBlockId,
+        r.date,
+      );
+    }
+  });
 }
 
 export async function replaceTemplates(templates: RoutineTemplate[]): Promise<void> {

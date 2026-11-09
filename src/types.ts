@@ -36,6 +36,12 @@ export interface Block {
 export interface TemplateBlock extends Block {
   /** 0 = Sunday .. 6 = Saturday */
   weekdays: number[];
+  /**
+   * Id of the block this one was split off from (weekday-scope split).
+   * Lets a stale id walk the split chain to the copy that recurs on a
+   * given weekday instead of editing the wrong copy.
+   */
+  splitFromId?: string;
 }
 
 export interface RoutineTemplate {

@@ -72,7 +72,7 @@ export function resolveActiveTemplate(
 export function updateTemplateBlock(
   template: RoutineTemplate,
   blockId: string,
-  patch: Partial<TemplateBlock>,
+  patch: Omit<Partial<TemplateBlock>, 'id' | 'weekdays' | 'splitFromId'>,
 ): RoutineTemplate {
   return {
     ...template,
@@ -90,34 +90,73 @@ export function removeTemplateBlock(
   return { ...template, blocks: template.blocks.filter((b) => b.id !== blockId) };
 }
 
+export interface SplitResult {
+  template: RoutineTemplate;
+  /** Id of the remainder block (the other weekdays), if one was split off. */
+  remainderId: string | null;
+}
+
 /**
- * 'weekday': split a template block — the original loses `weekday`, and a copy
- * carrying `patch` recurs on `weekday` only. Returns the new template.
+ * 'weekday': split a template block — the copy for `weekday` carries `patch`
+ * and KEEPS the original id, so completions keyed by that id (and any
+ * in-flight second edit, e.g. a resize after a category patch in the same
+ * sheet) keep matching the edited weekday. The remainder (other weekdays)
+ * gets a fresh id; the store re-keys that side's past completions to it.
+ * If the block recurs only on `weekday`, it is patched in place — no split,
+ * no re-id at all.
  */
 export function splitTemplateBlockForWeekday(
   template: RoutineTemplate,
   blockId: string,
   weekday: number,
-  patch: Partial<TemplateBlock>,
-): RoutineTemplate {
+  patch: Omit<Partial<TemplateBlock>, 'id' | 'weekdays' | 'splitFromId'>,
+): SplitResult {
   const original = template.blocks.find((b) => b.id === blockId);
-  if (!original) return template;
+  if (!original) return { template, remainderId: null };
   const remaining = original.weekdays.filter((w) => w !== weekday);
+  if (remaining.length === 0) {
+    return {
+      template: updateTemplateBlock(template, blockId, patch),
+      remainderId: null,
+    };
+  }
+  const remainderId = db.newId();
   const blocks: TemplateBlock[] = [];
   for (const b of template.blocks) {
     if (b.id !== blockId) {
       blocks.push(b);
       continue;
     }
-    if (remaining.length > 0) blocks.push({ ...b, weekdays: remaining });
-    blocks.push({
-      ...b,
-      ...patch,
-      id: db.newId(),
-      weekdays: [weekday],
-    });
+    blocks.push({ ...b, id: remainderId, weekdays: remaining, splitFromId: b.id });
+    blocks.push({ ...b, ...patch, weekdays: [weekday] });
   }
-  return { ...template, blocks };
+  return { template: { ...template, blocks }, remainderId };
+}
+
+/**
+ * Resolve the template block id that actually recurs on `weekday` for a
+ * possibly-stale `blockId`. After a weekday split the remainder carries
+ * `splitFromId` pointing at its parent, so a stale id walks the split
+ * chain to the copy that recurs that weekday. Returns null when no copy
+ * recurs there (override-only block, or a deleted recurrence) — callers
+ * then fall back to a today-only edit instead of touching the wrong copy.
+ */
+export function resolveBlockIdForDate(
+  template: RoutineTemplate,
+  blockId: string,
+  weekday: number,
+): string | null {
+  let current = blockId;
+  const seen = new Set<string>();
+  for (let i = 0; i < 10 && !seen.has(current); i++) {
+    seen.add(current);
+    const block = template.blocks.find((b) => b.id === current);
+    if (block?.weekdays.includes(weekday)) return current;
+    const child = template.blocks.find((b) => b.splitFromId === current);
+    if (!child) return null;
+    current = child.id;
+  }
+  return null;
 }
 
 /** 'weekday' delete: drop `weekday` from the block; drop the block if none left. */
@@ -130,7 +169,12 @@ export function removeWeekdayFromTemplate(
   if (!original) return template;
   const remaining = original.weekdays.filter((w) => w !== weekday);
   if (remaining.length === 0) return removeTemplateBlock(template, blockId);
-  return updateTemplateBlock(template, blockId, { weekdays: remaining });
+  return {
+    ...template,
+    blocks: template.blocks.map((b) =>
+      b.id === blockId ? { ...b, weekdays: remaining } : b,
+    ),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -249,6 +293,9 @@ export interface TaktState {
   redo: () => Promise<void>;
   canUndo: () => boolean;
   canRedo: () => boolean;
+  /** Group several store ops under ONE undo entry (one user gesture). */
+  beginUndoBatch: () => void;
+  endUndoBatch: () => void;
 }
 
 function snapshotOf(s: TaktState): Snapshot {
@@ -277,8 +324,13 @@ function minutesNow(): number {
 }
 
 export const useStore = create<TaktState>()((set, get) => {
+  /** Undo-batch depth: while > 0, pushUndo() is a no-op because
+   * beginUndoBatch() already snapshotted once for the whole gesture. */
+  let undoBatchDepth = 0;
+
   /** Snapshot current state onto the undo stack (call BEFORE mutating). */
   function pushUndo(): void {
+    if (undoBatchDepth > 0) return;
     const s = get();
     const undoStack = [...s.undoStack, snapshotOf(s)].slice(-UNDO_LIMIT);
     set({ undoStack, redoStack: [] });
@@ -333,6 +385,31 @@ export const useStore = create<TaktState>()((set, get) => {
     set((s) => ({ dayOverrides: { ...s.dayOverrides, [date]: blocks } }));
   }
 
+  /**
+   * A weekday/onwards edit must not be shadowed by a day override for that
+   * date (e.g. a drag auto-shifted neighbours into a 'today' override that
+   * froze the freshly split primary): sync just the edited fields onto the
+   * override's copy of the block. Other fields in the override (e.g. a
+   * neighbour's today-only shifted position) are left untouched.
+   * Semantics (deliberate): the latest explicit instruction wins for the
+   * edited fields. If the user first moved a block today-only and then
+   * moves it weekday-scope, the scoped move supersedes today's deviation
+   * for that block — today IS that weekday, so the scoped value is what
+   * they just asked for.
+   */
+  async function syncOverrideForScopedEdit(
+    date: string,
+    blockId: string,
+    patch: Partial<Block>,
+  ): Promise<void> {
+    const override = get().dayOverrides[date];
+    if (!override || !override.some((b) => b.id === blockId)) return;
+    await commitOverride(
+      date,
+      override.map((b) => (b.id === blockId ? { ...b, ...patch } : b)),
+    );
+  }
+
   /** Upsert a completion entry and update state. */
   async function commitCompletion(entry: CompletionEntry): Promise<void> {
     await db.saveCompletion(entry);
@@ -344,6 +421,139 @@ export const useStore = create<TaktState>()((set, get) => {
         entry,
       ],
     }));
+  }
+
+  /**
+   * Which completions must follow the remainder block after a weekday split:
+   * those keyed by the old id on dates whose weekday is in the remainder
+   * set. Skipped: the edited weekday (its copy kept the old id), dates
+   * whose weekday never recurs (e.g. a one-off override instance), and
+   * dates governed by a different template version. Override-shadowed
+   * dates migrate too — their override copies are re-keyed in the same
+   * pass, so the completion must follow.
+   */
+  function splitRekeys(
+    templateId: string,
+    oldId: string,
+    remainderId: string,
+    weekday: number,
+    remainderWeekdays: number[],
+    completions: CompletionEntry[],
+    templates: RoutineTemplate[],
+  ): { oldBlockId: string; newBlockId: string; date: string }[] {
+    return completions
+      .filter((c) => {
+        if (c.blockId !== oldId) return false;
+        const w = new Date(`${c.date}T00:00:00`).getDay();
+        if (w === weekday) return false;
+        if (!remainderWeekdays.includes(w)) return false;
+        return resolveTemplateForDate(c.date, templates)?.id === templateId;
+      })
+      .map((c) => ({ oldBlockId: oldId, newBlockId: remainderId, date: c.date }));
+  }
+
+  /**
+   * Split a template block for one weekday and persist it atomically with
+   * the other weekdays' completion re-keying (one sqlite transaction, so a
+   * crash can never leave the split saved and the completions behind).
+   * After the await, state is re-read and the re-keying re-applied onto the
+   * fresh array, so a Done tap landing mid-split is never wiped by a stale
+   * snapshot. Runs inside the same undo snapshot as the split.
+   */
+  async function applyWeekdaySplit(
+    template: RoutineTemplate,
+    blockId: string,
+    weekday: number,
+    patch: Omit<Partial<TemplateBlock>, 'id' | 'weekdays' | 'splitFromId'>,
+  ): Promise<void> {
+    const { template: next, remainderId } = splitTemplateBlockForWeekday(
+      template,
+      blockId,
+      weekday,
+      patch,
+    );
+    if (!remainderId) {
+      await commitTemplate(next);
+      return;
+    }
+    const remainderWeekdays =
+      next.blocks.find((b) => b.id === remainderId)?.weekdays ?? [];
+    const s = get();
+    const rekeys = splitRekeys(
+      template.id,
+      blockId,
+      remainderId,
+      weekday,
+      remainderWeekdays,
+      s.completions,
+      s.templates,
+    );
+    // Day-override copies on remainder weekdays still carry the old id.
+    // Re-key them to the remainder id, or a later scoped edit of that date
+    // would resolve the stale id to the WRONG copy (the edited weekday's)
+    // and mutate it. Same pass shape as splitRekeys, but for overrides.
+    const overrideRekeys = Object.entries(s.dayOverrides)
+      .filter(([date, blocks]) => {
+        const w = new Date(`${date}T00:00:00`).getDay();
+        if (w === weekday) return false;
+        if (!remainderWeekdays.includes(w)) return false;
+        return blocks.some((b) => b.id === blockId);
+      })
+      .map(([date, blocks]) => ({
+        date,
+        blocks: blocks.map((b) =>
+          b.id === blockId ? { ...b, id: remainderId } : b,
+        ),
+      }));
+    await db.saveTemplateWithCompletionRekey(next, rekeys, overrideRekeys);
+    const fresh = get();
+    const freshRekeys = splitRekeys(
+      template.id,
+      blockId,
+      remainderId,
+      weekday,
+      remainderWeekdays,
+      fresh.completions,
+      fresh.templates,
+    );
+    const alreadyDone = new Set(rekeys.map((r) => r.date));
+    const delta = freshRekeys.filter((r) => !alreadyDone.has(r.date));
+    if (delta.length > 0) await db.rekeyCompletions(delta);
+    // Functional set: the affected dates are recomputed from the latest
+    // state at set time, so anything that landed during the awaits above
+    // (e.g. a Done tap) is re-keyed in memory too instead of being wiped
+    // by a stale snapshot read.
+    set((s) => {
+      const affected = new Set(
+        splitRekeys(
+          template.id,
+          blockId,
+          remainderId,
+          weekday,
+          remainderWeekdays,
+          s.completions,
+          s.templates,
+        ).map((r) => r.date),
+      );
+      const nextOverrides = { ...s.dayOverrides };
+      for (const o of overrideRekeys) {
+        const latest = nextOverrides[o.date];
+        if (latest?.some((b) => b.id === blockId)) {
+          nextOverrides[o.date] = latest.map((b) =>
+            b.id === blockId ? { ...b, id: remainderId } : b,
+          );
+        }
+      }
+      return {
+        templates: s.templates.map((t) => (t.id === next.id ? next : t)),
+        completions: s.completions.map((c) =>
+          c.blockId === blockId && affected.has(c.date)
+            ? { ...c, blockId: remainderId }
+            : c,
+        ),
+        dayOverrides: nextOverrides,
+      };
+    });
   }
 
   return {
@@ -454,26 +664,36 @@ export const useStore = create<TaktState>()((set, get) => {
         emitToast('Moved for today only.');
       } else {
         const template = await ensureTemplate(date);
-        const found = template.blocks.some((b) => b.id === blockId);
-        if (!found) {
-          // Override-only block: fall back to a today-only move.
-          const blocks = get()
-            .getBlocksForDate(date)
-            .map((b) => (b.id === blockId ? { ...b, startMin: newStartMin } : b));
-          await commitOverride(date, blocks);
-          emitToast('That block only exists today, so it moved for today only.');
+        // A stale id (held from before a split) walks the split chain to
+        // the copy that actually recurs on this weekday; null means the
+        // block only exists in a day override (or nowhere on this date).
+        const resolvedId = resolveBlockIdForDate(template, blockId, weekday);
+        if (!resolvedId) {
+          const blocks = get().getBlocksForDate(date);
+          if (!blocks.some((b) => b.id === blockId)) {
+            emitToast('That block no longer exists on this day.');
+          } else {
+            await commitOverride(
+              date,
+              blocks.map((b) =>
+                b.id === blockId ? { ...b, startMin: newStartMin } : b,
+              ),
+            );
+            emitToast('That block only exists today, so it moved for today only.');
+          }
         } else if (scope === 'onwards') {
           await commitTemplate(
-            updateTemplateBlock(template, blockId, { startMin: newStartMin }),
+            updateTemplateBlock(template, resolvedId, { startMin: newStartMin }),
           );
           emitToast('Moved from today onwards.');
         } else {
-          await commitTemplate(
-            splitTemplateBlockForWeekday(template, blockId, weekday, {
-              startMin: newStartMin,
-            }),
-          );
+          await applyWeekdaySplit(template, resolvedId, weekday, {
+            startMin: newStartMin,
+          });
           emitToast('Moved for this weekday onwards.');
+        }
+        if (resolvedId) {
+          await syncOverrideForScopedEdit(date, resolvedId, { startMin: newStartMin });
         }
       }
       notifyAfterChange();
@@ -492,29 +712,38 @@ export const useStore = create<TaktState>()((set, get) => {
         emitToast('Resized for today only.');
       } else {
         const template = await ensureTemplate(date);
-        const found = template.blocks.some((b) => b.id === blockId);
-        if (!found) {
-          const blocks = get()
-            .getBlocksForDate(date)
-            .map((b) =>
-              b.id === blockId ? { ...b, durationMin: newDurationMin } : b,
+        // Stale ids resolve through the split chain (see moveBlock).
+        const resolvedId = resolveBlockIdForDate(template, blockId, weekday);
+        if (!resolvedId) {
+          const blocks = get().getBlocksForDate(date);
+          if (!blocks.some((b) => b.id === blockId)) {
+            emitToast('That block no longer exists on this day.');
+          } else {
+            await commitOverride(
+              date,
+              blocks.map((b) =>
+                b.id === blockId ? { ...b, durationMin: newDurationMin } : b,
+              ),
             );
-          await commitOverride(date, blocks);
-          emitToast('That block only exists today, so it resized for today only.');
+            emitToast('That block only exists today, so it resized for today only.');
+          }
         } else if (scope === 'onwards') {
           await commitTemplate(
-            updateTemplateBlock(template, blockId, {
+            updateTemplateBlock(template, resolvedId, {
               durationMin: newDurationMin,
             }),
           );
           emitToast('Resized from today onwards.');
         } else {
-          await commitTemplate(
-            splitTemplateBlockForWeekday(template, blockId, weekday, {
-              durationMin: newDurationMin,
-            }),
-          );
+          await applyWeekdaySplit(template, resolvedId, weekday, {
+            durationMin: newDurationMin,
+          });
           emitToast('Resized for this weekday onwards.');
+        }
+        if (resolvedId) {
+          await syncOverrideForScopedEdit(date, resolvedId, {
+            durationMin: newDurationMin,
+          });
         }
       }
       notifyAfterChange();
@@ -531,22 +760,28 @@ export const useStore = create<TaktState>()((set, get) => {
         emitToast('Updated for today only.');
       } else {
         const template = await ensureTemplate(date);
-        const found = template.blocks.some((b) => b.id === blockId);
-        if (!found) {
-          // Override-only block: fall back to a today-only patch.
-          const blocks = get()
-            .getBlocksForDate(date)
-            .map((b) => (b.id === blockId ? { ...b, ...patch } : b));
-          await commitOverride(date, blocks);
-          emitToast('That block only exists today, so it updated for today only.');
+        // Stale ids resolve through the split chain (see moveBlock).
+        const resolvedId = resolveBlockIdForDate(template, blockId, weekday);
+        if (!resolvedId) {
+          const blocks = get().getBlocksForDate(date);
+          if (!blocks.some((b) => b.id === blockId)) {
+            emitToast('That block no longer exists on this day.');
+          } else {
+            await commitOverride(
+              date,
+              blocks.map((b) => (b.id === blockId ? { ...b, ...patch } : b)),
+            );
+            emitToast('That block only exists today, so it updated for today only.');
+          }
         } else if (scope === 'onwards') {
-          await commitTemplate(updateTemplateBlock(template, blockId, patch));
+          await commitTemplate(updateTemplateBlock(template, resolvedId, patch));
           emitToast('Updated from today onwards.');
         } else {
-          await commitTemplate(
-            splitTemplateBlockForWeekday(template, blockId, weekday, patch),
-          );
+          await applyWeekdaySplit(template, resolvedId, weekday, patch);
           emitToast('Updated for this weekday onwards.');
+        }
+        if (resolvedId) {
+          await syncOverrideForScopedEdit(date, resolvedId, patch);
         }
       }
       notifyAfterChange();
@@ -555,6 +790,8 @@ export const useStore = create<TaktState>()((set, get) => {
     deleteBlock: async (blockId, date, scope) => {
       pushUndo();
       const weekday = new Date(`${date}T00:00:00`).getDay();
+      // Stale ids resolve through the split chain (see moveBlock).
+      let targetId = blockId;
       if (scope === 'today') {
         const blocks = get()
           .getBlocksForDate(date)
@@ -563,28 +800,29 @@ export const useStore = create<TaktState>()((set, get) => {
         emitToast('Deleted for today only.');
       } else {
         const template = await ensureTemplate(date);
+        targetId = resolveBlockIdForDate(template, blockId, weekday) ?? blockId;
         if (scope === 'onwards') {
-          await commitTemplate(removeTemplateBlock(template, blockId));
+          await commitTemplate(removeTemplateBlock(template, targetId));
           emitToast('Deleted from today onwards.');
         } else {
           await commitTemplate(
-            removeWeekdayFromTemplate(template, blockId, weekday),
+            removeWeekdayFromTemplate(template, targetId, weekday),
           );
           emitToast('Deleted for this weekday onwards.');
         }
         // A today override shadowing the template must not resurrect the block.
         const override = get().dayOverrides[date];
-        if (override && override.some((b) => b.id === blockId)) {
+        if (override && override.some((b) => b.id === targetId)) {
           await commitOverride(
             date,
-            override.filter((b) => b.id !== blockId),
+            override.filter((b) => b.id !== targetId),
           );
         }
       }
-      await db.deleteCompletion(blockId, date);
+      await db.deleteCompletion(targetId, date);
       set((s) => ({
         completions: s.completions.filter(
-          (c) => !(c.blockId === blockId && c.date === date),
+          (c) => !(c.blockId === targetId && c.date === date),
         ),
       }));
       notifyAfterChange();
@@ -748,6 +986,9 @@ export const useStore = create<TaktState>()((set, get) => {
     },
 
     undo: async () => {
+      // A gesture is mid-flight: its snapshot is not final yet, so popping
+      // the stack now would strand the rest of the batch un-undoable.
+      if (undoBatchDepth > 0) return;
       const s = get();
       const prev = s.undoStack[s.undoStack.length - 1];
       if (!prev) return;
@@ -766,6 +1007,7 @@ export const useStore = create<TaktState>()((set, get) => {
     },
 
     redo: async () => {
+      if (undoBatchDepth > 0) return;
       const s = get();
       const next = s.redoStack[s.redoStack.length - 1];
       if (!next) return;
@@ -785,5 +1027,13 @@ export const useStore = create<TaktState>()((set, get) => {
 
     canUndo: () => get().undoStack.length > 0,
     canRedo: () => get().redoStack.length > 0,
+
+    beginUndoBatch: () => {
+      if (undoBatchDepth === 0) pushUndo();
+      undoBatchDepth += 1;
+    },
+    endUndoBatch: () => {
+      undoBatchDepth = Math.max(0, undoBatchDepth - 1);
+    },
   };
 });

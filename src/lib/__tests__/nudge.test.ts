@@ -320,19 +320,37 @@ describe('scope edits on templates', () => {
   });
 
   it('splitTemplateBlockForWeekday keeps other weekdays and copies the one', () => {
-    const next = splitTemplateBlockForWeekday(base, 'a', 2, { startMin: 660 });
+    const { template: next, remainderId } = splitTemplateBlockForWeekday(base, 'a', 2, { startMin: 660 });
     expect(next.blocks).toHaveLength(2);
-    const [original, copy] = next.blocks;
-    expect(original.weekdays).toEqual([1, 3]);
-    expect(original.startMin).toBe(540);
+    const [remainder, copy] = next.blocks;
+    expect(remainder.weekdays).toEqual([1, 3]);
+    expect(remainder.startMin).toBe(540);
+    // The remainder (other weekdays) gets the fresh id; the edited weekday's
+    // copy KEEPS the original id so its completions keep matching.
+    expect(remainder.id).not.toBe('a');
+    expect(remainder.id).toBe(remainderId);
+    expect(remainder.splitFromId).toBe('a');
     expect(copy.weekdays).toEqual([2]);
     expect(copy.startMin).toBe(660);
-    expect(copy.id).not.toBe('a');
+    expect(copy.id).toBe('a');
+    expect(copy.splitFromId).toBeUndefined();
     // The split resolves correctly: Tuesday shows the moved copy only.
     const tuesday = resolveBlocksForDate(TUESDAY, [next], {});
     expect(tuesday.map((b) => b.startMin)).toEqual([660]);
     const monday = resolveBlocksForDate('2026-11-09', [next], {});
     expect(monday.map((b) => b.startMin)).toEqual([540]);
+  });
+
+  it('splitTemplateBlockForWeekday patches in place when the block recurs only on that weekday', () => {
+    const solo = template('t', '2026-11-01', [
+      templateBlock('a', 540, 30, [2]),
+    ]);
+    const { template: next, remainderId } = splitTemplateBlockForWeekday(solo, 'a', 2, { startMin: 660 });
+    expect(next.blocks).toHaveLength(1);
+    expect(next.blocks[0].id).toBe('a');
+    expect(next.blocks[0].startMin).toBe(660);
+    expect(next.blocks[0].weekdays).toEqual([2]);
+    expect(remainderId).toBeNull();
   });
 
   it('removeWeekdayFromTemplate drops the weekday, then the block', () => {
