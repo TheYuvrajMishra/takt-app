@@ -5,14 +5,8 @@
 // edits are scoped "Today only". Uses Worker A's real store
 // (src/store/useStore.ts) — no stub: the store landed before this screen.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Text, TextInput } from '../../components/TText';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, fonts, hairline, radii, spacing } from '../../theme/tokens';
 import { DEFAULT_DURATION_MIN } from '../../types';

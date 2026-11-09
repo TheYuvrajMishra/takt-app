@@ -1,7 +1,8 @@
 // Takt — Sheet. Bottom sheet on a Modal: slide-up, backdrop tap to close,
 // drag handle with swipe-down-to-dismiss. Content scrolls when tall.
 import type { ReactNode } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Text } from './TText';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   runOnJS,
@@ -10,6 +11,7 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated';
 import { colors, fonts, hairline, radii, spacing } from '../theme/tokens';
+import { useAppReducedMotion } from '../theme/motion';
 
 export interface SheetProps {
   visible: boolean;
@@ -22,6 +24,7 @@ export interface SheetProps {
 
 export function Sheet({ visible, onClose, title, scopeLabel, children }: SheetProps) {
   const translateY = useSharedValue(0);
+  const reducedMotion = useAppReducedMotion();
 
   const pan = Gesture.Pan()
     .onUpdate((e) => {
@@ -32,7 +35,9 @@ export function Sheet({ visible, onClose, title, scopeLabel, children }: SheetPr
       if (e.translationY > 90 || e.velocityY > 700) {
         runOnJS(onClose)();
       }
-      translateY.value = withSpring(0, { damping: 22, stiffness: 260 });
+      // Reduced motion: snap back instantly, no spring.
+      if (reducedMotion) translateY.value = 0;
+      else translateY.value = withSpring(0, { damping: 22, stiffness: 260 });
     });
 
   const sheetStyle = useAnimatedStyle(() => ({
@@ -40,7 +45,7 @@ export function Sheet({ visible, onClose, title, scopeLabel, children }: SheetPr
   }));
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType={reducedMotion ? 'none' : 'slide'} onRequestClose={onClose}>
       <View style={styles.root}>
         <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close sheet" />
         <GestureDetector gesture={pan}>

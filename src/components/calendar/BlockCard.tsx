@@ -3,14 +3,17 @@
 // 22px resize zone resizes, anywhere else moves. Long-press selects,
 // tap opens the editor. Magnetic edges are supplied by the parent.
 import { useEffect } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Text } from '../TText';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import type { Block } from '../../types';
 import { categoryColorHex, colors, fonts } from '../../theme/tokens';
+import { useAppReducedMotion } from '../../theme/motion';
 import { snap5 } from '../../lib/core';
 import { categoryById, formatRange, textColorFor } from './helpers';
+import { useStore } from '../../store/useStore';
 
 export interface BlockCardProps {
   block: Block;
@@ -45,6 +48,8 @@ const RESIZE_ZONE = 22;
 
 export function BlockCard(props: BlockCardProps) {
   const { block, hourHeight } = props;
+  const categories = useStore((s) => s.categories);
+  const reducedMotion = useAppReducedMotion();
   const ty = useSharedValue(0);
   const lastSnap = useSharedValue(block.startMin);
   const lastDur = useSharedValue(block.durationMin);
@@ -103,7 +108,9 @@ export function BlockCard(props: BlockCardProps) {
       if (mode.value === 1) {
         runOnJS(props.onResizeEnd)(block.id, lastDur.value);
       } else {
-        ty.value = withTiming(0, { duration: 120 });
+        // Reduced motion: snap back instantly, no 120ms ease.
+        if (reducedMotion) ty.value = 0;
+        else ty.value = withTiming(0, { duration: 120 });
         runOnJS(props.onDragEnd)(block.id, lastSnap.value);
       }
     })
@@ -129,7 +136,7 @@ export function BlockCard(props: BlockCardProps) {
     opacity: props.dragging ? 0.35 : 1,
   }));
 
-  const category = categoryById(block.categoryId);
+  const category = categoryById(block.categoryId, categories);
   const bg = categoryColorHex[category.color];
   const fg = textColorFor(category.color);
   const compact = props.height < 44;

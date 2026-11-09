@@ -24,8 +24,16 @@ export function startOfWeek(d: Date): Date {
   return c;
 }
 
-export function categoryById(id: string): Category {
-  return DEFAULT_CATEGORIES.find((c) => c.id === id) ?? DEFAULT_CATEGORIES[DEFAULT_CATEGORIES.length - 1];
+/**
+ * Resolve a category by id. Pass the store's live categories so
+ * user-created categories resolve with their real name/colour/icon —
+ * DEFAULT_CATEGORIES alone can never match a db-generated custom id
+ * (see store addCategory), and the old default-only lookup mislabelled
+ * custom blocks as "Custom" in apricot on the calendar. Falls back to
+ * the last default (Custom) for unknown ids.
+ */
+export function categoryById(id: string, categories: Category[] = DEFAULT_CATEGORIES): Category {
+  return categories.find((c) => c.id === id) ?? DEFAULT_CATEGORIES[DEFAULT_CATEGORIES.length - 1];
 }
 
 /** Text colour that stays legible on a category fill. */

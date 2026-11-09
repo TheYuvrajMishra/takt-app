@@ -1,6 +1,7 @@
 // Takt — tab layout. Black pill bottom nav (Today / Calendar / Stats);
 // the active tab is a filled paper pill inside it.
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Text } from '../../components/TText';
 import { Tabs } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, fonts, radii } from '../../theme/tokens';

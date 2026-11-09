@@ -4,7 +4,8 @@
 // Long-press a node: the parent opens the RadialMenu at the anchor point.
 import { useMemo, useState } from 'react';
 import type { ViewStyle } from 'react-native';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
+import { Text } from './TText';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   runOnJS,
@@ -14,6 +15,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import type { SharedValue } from 'react-native-reanimated';
 import { colors, fonts, hairline, radii } from '../theme/tokens';
+import { useAppReducedMotion } from '../theme/motion';
 import { CategoryIcon } from './CategoryIcon';
 import type { Category } from '../types';
 
@@ -152,6 +154,7 @@ function DockNode({
   onDragCancel,
   onLongPress,
 }: DockNodeProps) {
+  const reducedMotion = useAppReducedMotion();
   const longPress = Gesture.LongPress()
     .minDuration(380)
     .onStart((e) => {
@@ -180,9 +183,11 @@ function DockNode({
   const gesture = Gesture.Race(longPress, pan);
 
   // Magnify on proximity to the dragged node (by index distance).
+  // Reduced motion: apply the target scale directly, no spring.
   const nodeStyle = useAnimatedStyle(() => {
     const d = dragIndex.value;
     const target = d === -1 ? 1 : d === index ? 1.3 : Math.abs(d - index) === 1 ? 1.12 : 1;
+    if (reducedMotion) return { transform: [{ scale: target }] };
     return { transform: [{ scale: withSpring(target, { damping: 16, stiffness: 300 }) }] };
   });
 

@@ -1,5 +1,7 @@
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Modal, Pressable, StyleSheet, View } from 'react-native';
+import { Text } from './TText';
 import { colors, fonts, hairline, radii, spacing } from '../theme/tokens';
+import { useAppReducedMotion } from '../theme/motion';
 import { dateKey } from '../lib/core';
 
 export interface EndOfDaySheetProps {
@@ -36,6 +38,7 @@ export function EndOfDaySheet({
   firstTaskTomorrow,
   onViewTomorrow,
 }: EndOfDaySheetProps) {
+  const reducedMotion = useAppReducedMotion();
   const label = date ?? dateKey(new Date());
   const readable = new Date(label + 'T12:00:00').toLocaleDateString(undefined, {
     weekday: 'long',
@@ -43,7 +46,7 @@ export function EndOfDaySheet({
     day: 'numeric',
   });
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType={reducedMotion ? 'none' : 'slide'} onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close summary" />
       <View style={styles.sheet}>
         <View style={styles.handle} />

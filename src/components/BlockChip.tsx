@@ -1,7 +1,8 @@
 // Takt — BlockChip. One block in the Today timeline strip: time + title,
 // colored by status (mint complete, apricot progress, carbon missed,
 // hatched cloud upcoming). Fixed width so the strip can auto-center on now.
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
+import { Text } from './TText';
 import type { ViewStyle } from 'react-native';
 import { colors, fonts, radii, statusColors } from '../theme/tokens';
 import { minToTime } from '../lib/core';

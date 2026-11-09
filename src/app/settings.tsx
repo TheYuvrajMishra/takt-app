@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
+import { Text } from '../components/TText';
 import { useRouter } from 'expo-router';
 import { colors, fonts, hairline, radii, spacing } from '../theme/tokens';
 import { DEFAULT_CATEGORIES, type Settings } from '../types';

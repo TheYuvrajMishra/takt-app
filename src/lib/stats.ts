@@ -1,5 +1,6 @@
 import { dateKey } from './core';
 import type { Block, BlockStatus, CompletionEntry } from '../types';
+import type { PatternKind } from '../theme/tokens';
 
 // ---------------------------------------------------------------------------
 // Takt stats helpers — pure functions over day records.
@@ -283,4 +284,38 @@ export function weeklyTrend(days: DayRecord[], n = 7, endKey?: string): { date: 
     out.push({ date: key, score: dayScore(byDate.get(key)) });
   }
   return out;
+}
+
+/**
+ * Heatmap pattern geometry (32×32 cell space): line/dot segments for one
+ * pattern at a given spacing. Pure, so the Stats screen and tests share it.
+ * Each category's pattern (per-category patternForCategory, tokens.ts)
+ * is visually distinct from every other, so a heatmap cell's category
+ * reads without hue.
+ */
+export function heatmapPatternSegments(
+  pattern: PatternKind,
+  spacingPx: number,
+): { lines: [number, number, number, number][]; dots: [number, number][] } {
+  const lines: [number, number, number, number][] = [];
+  const dots: [number, number][] = [];
+  if (spacingPx === 0) return { lines, dots };
+  if (pattern === 'diag' || pattern === 'cross') {
+    for (let k = -32; k <= 0; k += spacingPx) lines.push([k, 32, k + 32, 0]);
+  }
+  if (pattern === 'diag-rev' || pattern === 'cross') {
+    for (let k = -32; k <= 0; k += spacingPx) lines.push([k, 0, k + 32, 32]);
+  }
+  if (pattern === 'horiz') {
+    for (let y = 0; y <= 32; y += spacingPx) lines.push([0, y, 32, y]);
+  }
+  if (pattern === 'vert') {
+    for (let x = 0; x <= 32; x += spacingPx) lines.push([x, 0, x, 32]);
+  }
+  if (pattern === 'dots') {
+    for (let y = spacingPx / 2; y < 32; y += spacingPx) {
+      for (let x = spacingPx / 2; x < 32; x += spacingPx) dots.push([x, y]);
+    }
+  }
+  return { lines, dots };
 }

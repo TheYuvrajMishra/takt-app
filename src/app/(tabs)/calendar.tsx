@@ -11,18 +11,8 @@
 // block at the drop position, dropping outside the grid (or tapping the
 // "+" customize action) falls back to the earliest free slot.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  useWindowDimensions,
-  View,
-  type ScrollViewInstance,
-} from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Switch, useWindowDimensions, View, type ScrollViewInstance } from 'react-native';
+import { Text, TextInput } from '../../components/TText';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import { runOnJS, useSharedValue } from 'react-native-reanimated';
@@ -35,6 +25,7 @@ import {
   type Scope,
 } from '../../types';
 import { categoryColorHex, colors, faintText, fonts, hairline, radii, spacing } from '../../theme/tokens';
+import { useAppReducedMotion } from '../../theme/motion';
 import { dateKey, defaultDoNotNudgeFor, earliestEmptySlot, minToTime, overlaps, snap5 } from '../../lib/core';
 import {
   addDays,
@@ -104,6 +95,7 @@ function nowMinutes(): number {
 }
 
 export default function CalendarScreen() {
+  const reducedMotion = useAppReducedMotion();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const scrollRef = useRef<ScrollViewInstance | null>(null);
@@ -555,7 +547,7 @@ export default function CalendarScreen() {
   // ---- quick create / edit sheet -------------------------------------
   const saveQuick = useCallback(() => {
     if (!quick) return;
-    const title = qcTitle.trim() || categoryById(qcCategoryId).name;
+    const title = qcTitle.trim() || categoryById(qcCategoryId, categories).name;
     if (quick.mode === 'create') {
       const block: Block = {
         id: newId(),
@@ -1008,7 +1000,7 @@ export default function CalendarScreen() {
     if (colIdx < 0) return null;
     const top = (ghost.startMin / 60) * hourHeight;
     const height = Math.max(28, (ghost.durationMin / 60) * hourHeight);
-    const category = categoryById(ghost.blockId ? (findBlock(ghost.blockId)?.block.categoryId ?? 'cat-custom') : 'cat-custom');
+    const category = categoryById(ghost.blockId ? (findBlock(ghost.blockId)?.block.categoryId ?? 'cat-custom') : 'cat-custom', categories);
     const bg = `${categoryColorHex[category.color]}66`;
     return (
       <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }}>
@@ -1171,7 +1163,7 @@ export default function CalendarScreen() {
         )}
 
         {/* Quick create / edit sheet */}
-        <Modal visible={quick !== null} transparent animationType="slide" onRequestClose={() => setQuick(null)}>
+        <Modal visible={quick !== null} transparent animationType={reducedMotion ? 'none' : 'slide'} onRequestClose={() => setQuick(null)}>
           <Pressable style={styles.sheetBackdrop} onPress={() => setQuick(null)}>
             <Pressable style={styles.sheet} onPress={() => undefined}>
               <View style={styles.sheetHandle} />
@@ -1247,7 +1239,7 @@ export default function CalendarScreen() {
 
         {/* Scope sheet — shown on every change; the change only runs
             once a scope is picked, dismissing cancels it. */}
-        <Modal visible={pending !== null} transparent animationType="slide" onRequestClose={cancelPending}>
+        <Modal visible={pending !== null} transparent animationType={reducedMotion ? 'none' : 'slide'} onRequestClose={cancelPending}>
           <Pressable style={styles.sheetBackdrop} onPress={cancelPending}>
             <Pressable style={styles.sheet} onPress={() => undefined}>
               <View style={styles.sheetHandle} />
@@ -1282,7 +1274,7 @@ export default function CalendarScreen() {
         </Modal>
 
         {/* Swap sheet — when a drop cannot auto-shift */}
-        <Modal visible={swapSheet !== null} transparent animationType="slide" onRequestClose={() => setSwapSheet(null)}>
+        <Modal visible={swapSheet !== null} transparent animationType={reducedMotion ? 'none' : 'slide'} onRequestClose={() => setSwapSheet(null)}>
           <Pressable style={styles.sheetBackdrop} onPress={() => setSwapSheet(null)}>
             <Pressable style={styles.sheet} onPress={() => undefined}>
               <View style={styles.sheetHandle} />
@@ -1310,7 +1302,7 @@ export default function CalendarScreen() {
         </Modal>
 
         {/* Routine template picker */}
-        <Modal visible={templateSheet} transparent animationType="slide" onRequestClose={() => setTemplateSheet(false)}>
+        <Modal visible={templateSheet} transparent animationType={reducedMotion ? 'none' : 'slide'} onRequestClose={() => setTemplateSheet(false)}>
           <Pressable style={styles.sheetBackdrop} onPress={() => setTemplateSheet(false)}>
             <Pressable style={styles.sheet} onPress={() => undefined}>
               <View style={styles.sheetHandle} />

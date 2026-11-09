@@ -1,6 +1,7 @@
 // Takt — Chip. Small full-pill label chip, optionally colored and pressable.
 import type { PressableProps, ViewStyle } from 'react-native';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
+import { Text } from './TText';
 import { colors, fonts, hairline, radii } from '../theme/tokens';
 
 export interface ChipProps {

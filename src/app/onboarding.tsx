@@ -1,14 +1,6 @@
 import { useRef, useState } from 'react';
-import {
-  Linking,
-  PanResponder,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Linking, PanResponder, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Text, TextInput } from '../components/TText';
 import { useRouter } from 'expo-router';
 import * as Notifications from 'expo-notifications';
 import * as Haptics from 'expo-haptics';

@@ -4,7 +4,8 @@
 // No subcategories: long-press + release creates the category directly.
 // Keep pressing a selected subcategory and it enters attach/drag mode.
 import { useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { StyleSheet, View, useWindowDimensions } from 'react-native';
+import { Text } from './TText';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
 import Animated, {
@@ -15,6 +16,7 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated';
 import { colors, fonts, radii } from '../theme/tokens';
+import { useAppReducedMotion } from '../theme/motion';
 import { CategoryIcon } from './CategoryIcon';
 import type { Category, Subcategory } from '../types';
 
@@ -170,11 +172,18 @@ interface RadialItemProps {
 
 function RadialItem({ sub, index, angle, cx, cy, highlighted }: RadialItemProps) {
   const progress = useSharedValue(0);
+  const reducedMotion = useAppReducedMotion();
 
   useEffect(() => {
+    // Reduced motion: items appear at their final positions instantly,
+    // no staggered spring bloom.
+    if (reducedMotion) {
+      progress.value = 1;
+      return;
+    }
     progress.value = withDelay(index * 45, withSpring(1, { damping: 15, stiffness: 240 }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [reducedMotion, index]);
 
   const rad = (angle * Math.PI) / 180;
   const style = useAnimatedStyle(() => {

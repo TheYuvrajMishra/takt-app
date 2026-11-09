@@ -1,6 +1,7 @@
 // Takt — status Pill. Complete mint, Progress apricot, Missed carbon/white,
 // Upcoming hatched cloud (DESIGN.md).
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Text } from './TText';
 import type { ViewStyle } from 'react-native';
 import { colors, fonts, radii, statusColors } from '../theme/tokens';
 import { Hatch } from './Hatch';

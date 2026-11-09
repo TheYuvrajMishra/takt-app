@@ -1,7 +1,8 @@
 // Takt — BigButton. The large pill button (e.g. the Done button on Today).
 // Primary is carbon with paper text; secondary is paper with a hairline border.
 import type { PressableProps, ViewStyle } from 'react-native';
-import { Pressable, StyleSheet, Text } from 'react-native';
+import { Pressable, StyleSheet } from 'react-native';
+import { Text } from './TText';
 import { colors, fonts, hairline, radii } from '../theme/tokens';
 
 export interface BigButtonProps {

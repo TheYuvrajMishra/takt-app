@@ -1,14 +1,17 @@
 import { useMemo, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import Svg, { Line } from 'react-native-svg';
+import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Text } from '../../components/TText';
+import Svg, { Circle, Line } from 'react-native-svg';
 import { CategoryIcon } from '../../components/CategoryIcon';
-import { colors, fonts, hairline, radii, spacing, categoryColorHex } from '../../theme/tokens';
-import { DEFAULT_CATEGORIES } from '../../types';
+import { colors, fonts, hairline, radii, spacing, categoryColorHex, patternForCategory } from '../../theme/tokens';
+import type { PatternKind } from '../../theme/tokens';
+import { useAppReducedMotion } from '../../theme/motion';
 import { dateKey } from '../../lib/core';
 import {
   computeStreaks,
   daySummary,
   daysFromStore,
+  heatmapPatternSegments,
   monthlyScores,
   onTimeRate,
   perCategoryFocusMinutes,
@@ -41,27 +44,41 @@ function scoreLevel(score: number, hasData: boolean): number {
   return 0;
 }
 
-/** One heatmap cell: cloud square, carbon 45-degree hatch, denser = higher score. */
-function HatchCell({ level, fill }: { level: number; fill?: string }) {
+/**
+ * One heatmap cell: cloud square, carbon hatch, denser = higher score.
+ * In the default mono mode the hatch is always 45° (density = score).
+ * When a category filter is active, the cell also takes the dominant
+ * category's color AND its pattern (see tokens.patternForCategory), so a day's
+ * category is readable without hue — the pattern is the second channel.
+ */
+function HatchCell({
+  level,
+  fill,
+  pattern = 'diag',
+}: {
+  level: number;
+  fill?: string;
+  pattern?: PatternKind;
+}) {
   const spacingPx = [0, 20, 14, 10, 7][level];
-  const lines: number[] = [];
-  if (spacingPx > 0) {
-    for (let k = -32; k <= 0; k += spacingPx) lines.push(k);
-  }
+  const { lines, dots } = heatmapPatternSegments(pattern, spacingPx);
   return (
     <View style={[styles.cell, fill ? { backgroundColor: fill } : undefined]}>
       <Svg width={CELL} height={CELL} viewBox="0 0 32 32">
-        {lines.map((k) => (
+        {lines.map(([x1, y1, x2, y2], i) => (
           <Line
-            key={k}
-            x1={k}
-            y1={32}
-            x2={k + 32}
-            y2={0}
+            key={`l-${i}`}
+            x1={x1}
+            y1={y1}
+            x2={x2}
+            y2={y2}
             stroke={colors.carbon}
             strokeWidth={1.4}
             opacity={0.75}
           />
+        ))}
+        {dots.map(([cx, cy], i) => (
+          <Circle key={`d-${i}`} cx={cx} cy={cy} r={1.6} fill={colors.carbon} opacity={0.75} />
         ))}
       </Svg>
     </View>
@@ -69,6 +86,7 @@ function HatchCell({ level, fill }: { level: number; fill?: string }) {
 }
 
 export default function StatsScreen() {
+  const reducedMotion = useAppReducedMotion();
   const [monthOffset, setMonthOffset] = useState(0);
   const [selectedCats, setSelectedCats] = useState<string[]>([]);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
@@ -77,6 +95,7 @@ export default function StatsScreen() {
   // templates / dayOverrides are subscribed so the dataset rebuilds
   // whenever blocks change, not only when completions change.
   const getBlocksForDate = useStore((s) => s.getBlocksForDate);
+  const categories = useStore((s) => s.categories);
   const completions = useStore((s) => s.completions);
   const templates = useStore((s) => s.templates);
   const dayOverrides = useStore((s) => s.dayOverrides);
@@ -125,8 +144,9 @@ export default function StatsScreen() {
   const toggleCat = (id: string) =>
     setSelectedCats((prev) => (prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id]));
 
-  /** Dominant filtered category for a day, for the colored-cell mode. */
-  const dayDominantColor = (date: string): string | undefined => {
+  /** Dominant filtered category for a day, for the colored-cell mode:
+   * its color AND its pattern, so the category reads without hue. */
+  const dayDominant = (date: string): { fill: string; pattern: PatternKind } | undefined => {
     if (selectedCats.length === 0) return undefined;
     const day = filteredDays.find((d) => d.date === date);
     if (!day || day.blocks.length === 0) return undefined;
@@ -140,10 +160,13 @@ export default function StatsScreen() {
         bestId = id;
       }
     }
-    const cat = DEFAULT_CATEGORIES.find((c) => c.id === bestId);
+    const cat = categories.find((c) => c.id === bestId);
     if (!cat) return undefined;
     const level = scoreLevel(scores.get(date) ?? 0, true);
-    return hexToRgba(categoryColorHex[cat.color], 0.3 + level * 0.14);
+    return {
+      fill: hexToRgba(categoryColorHex[cat.color], 0.3 + level * 0.14),
+      pattern: patternForCategory(cat),
+    };
   };
 
   const cells: (string | null)[] = [
@@ -161,7 +184,7 @@ export default function StatsScreen() {
 
       {/* Category filter chips (multi-select) */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsRow}>
-        {DEFAULT_CATEGORIES.map((cat) => {
+        {categories.map((cat) => {
           const active = selectedCats.includes(cat.id);
           return (
             <Pressable
@@ -204,20 +227,25 @@ export default function StatsScreen() {
           ))}
         </View>
         <View style={styles.grid}>
-          {cells.map((date, i) =>
-            date === null ? (
-              <View key={`blank-${i}`} style={styles.cellSpacer} />
-            ) : (
+          {cells.map((date, i) => {
+            if (date === null) {
+              return <View key={`blank-${i}`} style={styles.cellSpacer} />;
+            }
+            const dom = dayDominant(date);
+            return (
               <Pressable key={date} onPress={() => setSelectedDate(date)} accessibilityLabel={`Stats for ${date}`}>
                 <HatchCell
                   level={scoreLevel(scores.get(date) ?? 0, hasData.get(date) ?? false)}
-                  fill={dayDominantColor(date)}
+                  fill={dom?.fill}
+                  pattern={dom?.pattern}
                 />
               </Pressable>
-            ),
-          )}
+            );
+          })}
         </View>
-        <Text style={styles.legend}>Denser hatch means a stronger day. Tap a day for details.</Text>
+        <Text style={styles.legend}>
+          Denser hatch means a stronger day. With a category filter on, each category also has its own hatch pattern. Tap a day for details.
+        </Text>
       </View>
 
       {/* Streak + on-time cards */}
@@ -249,7 +277,7 @@ export default function StatsScreen() {
           <Text style={styles.emptyText}>No focus time in this view yet.</Text>
         ) : (
           focus.slice(0, 6).map((f) => {
-            const cat = DEFAULT_CATEGORIES.find((c) => c.id === f.categoryId);
+            const cat = categories.find((c) => c.id === f.categoryId);
             const maxMin = Math.max(1, ...focus.map((x) => x.minutes));
             const isTop = f.categoryId === topFocusId;
             return (
@@ -302,7 +330,7 @@ export default function StatsScreen() {
           <Text style={styles.emptyText}>Nothing to show yet.</Text>
         ) : (
           focus.map((f) => {
-            const cat = DEFAULT_CATEGORIES.find((c) => c.id === f.categoryId);
+            const cat = categories.find((c) => c.id === f.categoryId);
             if (!cat) return null;
             return (
               <View key={f.categoryId} style={styles.focusRow}>
@@ -317,7 +345,7 @@ export default function StatsScreen() {
       </View>
 
       {/* Day summary sheet */}
-      <Modal visible={summary !== null} transparent animationType="slide" onRequestClose={() => setSelectedDate(null)}>
+      <Modal visible={summary !== null} transparent animationType={reducedMotion ? 'none' : 'slide'} onRequestClose={() => setSelectedDate(null)}>
         <Pressable style={styles.backdrop} onPress={() => setSelectedDate(null)} accessibilityLabel="Close day summary" />
         <View style={styles.sheet}>
           <View style={styles.handle} />
