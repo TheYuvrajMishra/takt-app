@@ -1,0 +1,32 @@
+# Takt — PLAN.md
+
+App: routine app that nudges you until you do the thing. Name **Takt**, package `com.takt.app`, repo `TheYuvrajMishra/takt-app`.
+
+## Design tokens (single source of truth)
+`src/theme/tokens.ts` — Carbon #0A0A0A, Cloudy #F6F5F2, white #FFFFFF (raised cards only). NO grey token anywhere. Category palette: butter #F8E39A, mint #4BBF8F, violet #6A57C0, orchid #C0468F, apricot #F4A261, carbon #0A0A0A. Status: Complete mint, Progress apricot, Missed carbon/white text, Upcoming hatched cloud. Radii 28–36 cards, full pill chips. Font: Inter Tight (expo-font), 3 weights max. Film grain overlay everywhere. NO emoji anywhere. Category icons: custom SVG 1.75px stroke, rounded caps.
+
+## Phases
+- [x] Phase 0: repo (public), Expo SDK 58 scaffold, deps installed
+- [ ] Phase 1: design system + assets (tokens, fonts, grain, hatch, icons, base components, illustrations, icon/splash)
+- [ ] Phase 2: data + engine (models, sqlite persistence, template/override logic, discipline score, nudge engine, tests)
+- [ ] Phase 3: Today screen
+- [ ] Phase 4: Calendar mode
+- [ ] Phase 5: Node dock + radial quick-add + gestures
+- [ ] Phase 6: Stats mode
+- [ ] Phase 7: Onboarding
+- [ ] Phase 8: Settings, polish, haptics, accessibility, perf
+- [ ] Phase 9: CI + APK (build-apk.yml, arm64-v8a, keystore in gh secrets, release `latest` / app-release.apk)
+- [ ] Phase 10: iteration cycles (target 6, cap 10) + final delivery
+
+## File map (ownership — do not cross-write)
+- `src/theme/*` — tokens, fonts, grain, hatch
+- `src/types.ts`, `src/lib/core.ts` — shared types + pure logic (do not change signatures without updating all callers)
+- `src/lib/db.ts`, `src/lib/nudge.ts`, `src/store/*` — Worker A (data + engine)
+- `src/components/*` — shared UI (Card, Pill, Chip, Sheet, Button, DockNode, GrainOverlay, CategoryIcon)
+- `src/app/(tabs)/index.tsx` — Today (Worker B)
+- `src/app/(tabs)/calendar.tsx` — Calendar (Worker C)
+- `src/app/(tabs)/stats.tsx` — Stats (Worker D)
+- `src/app/onboarding.tsx`, `src/app/settings.tsx` — Worker D
+- `src/components/Dock.tsx`, `src/components/RadialMenu.tsx` — Worker B (shared by Today + Calendar)
+- `assets/*` — Worker E (icons, illustrations, splash)
+- `.github/workflows/build-apk.yml` — Worker E
