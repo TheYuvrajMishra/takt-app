@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   Linking,
   PanResponder,
@@ -17,6 +17,7 @@ import { DEFAULT_CATEGORIES, type Category, type Settings } from '../types';
 import { dateKey, earliestEmptySlot, minToTime, snap5 } from '../lib/core';
 import { CategoryIcon } from '../components/CategoryIcon';
 import { useStore } from '../store/useStore';
+import { requestNudgePermissions, rescheduleIfPermitted } from '../lib/nudge';
 
 // On finish, `settings.onboardingDone` is persisted through the store and
 // the root layout's onboarding gate stops redirecting here.
@@ -79,17 +80,8 @@ export default function OnboardingScreen({ onDone }: { onDone?: () => void }) {
   const [firstTaskStart, setFirstTaskStart] = useState(9 * 60);
   const [firstTaskScheduled, setFirstTaskScheduled] = useState(false);
 
-  useEffect(() => {
-    Notifications.setNotificationHandler({
-      handleNotification: async () => ({
-        shouldShowAlert: true,
-        shouldShowBanner: true,
-        shouldShowList: true,
-        shouldPlaySound: false,
-        shouldSetBadge: false,
-      }),
-    });
-  }, []);
+  // NOTE: the notification handler is owned by the root layout only; this
+  // screen used to set its own (sound off), silently re-muting nudges.
 
   const finish = () => {
     setDone(true);
@@ -110,8 +102,24 @@ export default function OnboardingScreen({ onDone }: { onDone?: () => void }) {
       setNotifStatus('granted');
       return;
     }
-    const next = await Notifications.requestPermissionsAsync();
-    setNotifStatus(next.status);
+    if (current.status === 'denied') {
+      // Re-requesting after a denial is a no-op on Android; send the user
+      // to system settings instead, like the Exact-alarms / Battery cards.
+      Linking.openSettings();
+      return;
+    }
+    const granted = await requestNudgePermissions();
+    setNotifStatus(granted ? 'granted' : 'denied');
+    // The root layout's initNudges() only schedules when already granted,
+    // so granting here must schedule the window now — otherwise zero
+    // nudges fire until the next store mutation or foreground event.
+    if (granted) {
+      try {
+        await rescheduleIfPermitted();
+      } catch (e) {
+        console.warn('Takt reschedule failed', e);
+      }
+    }
   };
 
   const sendTestNudge = async () => {
@@ -119,13 +127,15 @@ export default function OnboardingScreen({ onDone }: { onDone?: () => void }) {
       await Notifications.scheduleNotificationAsync({
         content: {
           title: 'Takt nudge',
-          body: 'Morning run starts now — tap Done when you finish.',
+          body: 'Morning run starts now — tap the nudge to open Takt.',
         },
         trigger: null,
       });
       setNudgeSent(true);
     } catch {
-      setNudgeSent(true);
+      // A failed schedule used to report success anyway; stay honest so the
+      // user retries instead of trusting a nudge that never fired.
+      setNudgeSent(false);
     }
   };
 

@@ -141,6 +141,15 @@ describe('isInQuietHours', () => {
     expect(isInQuietHours(420, '22:00', '07:00')).toBe(false); // 07:00
     expect(isInQuietHours(720, '22:00', '07:00')).toBe(false); // 12:00
   });
+
+  it('is inclusive at the start boundary and exclusive at the end', () => {
+    expect(isInQuietHours(1320, '22:00', '07:00')).toBe(true); // exactly 22:00
+    expect(isInQuietHours(1319, '22:00', '07:00')).toBe(false); // 21:59
+    expect(isInQuietHours(420, '22:00', '07:00')).toBe(false); // exactly 07:00
+    expect(isInQuietHours(419, '22:00', '07:00')).toBe(true); // 06:59
+    expect(isInQuietHours(540, '09:00', '17:00')).toBe(true); // exactly 09:00
+    expect(isInQuietHours(1020, '09:00', '17:00')).toBe(false); // exactly 17:00
+  });
 });
 
 describe('defaultDoNotNudgeFor', () => {

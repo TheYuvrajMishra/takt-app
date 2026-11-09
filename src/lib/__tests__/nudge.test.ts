@@ -32,6 +32,7 @@ vi.mock('expo-sqlite', () => ({
 import type { Block, CompletionEntry, RoutineTemplate, Settings } from '../../types';
 import {
   buildNudgePlan,
+  copyForPlanItem,
   makeNudgeId,
   nudgeCopy,
   parseNudgeId,
@@ -170,7 +171,7 @@ describe('buildNudgePlan', () => {
     expect(plan).toEqual([]);
   });
 
-  it('skips done and skipped blocks, but still nudges in-progress ones', () => {
+  it('skips done and skipped blocks; started blocks get wrap-up nudges only', () => {
     const completions: CompletionEntry[] = [
       { blockId: 'done', date: TUESDAY, status: 'complete', onTime: true },
       { blockId: 'skip', date: TUESDAY, status: 'skipped' },
@@ -181,6 +182,8 @@ describe('buildNudgePlan', () => {
         [TUESDAY]: [
           block('done', 540, 30),
           block('skip', 660, 30),
+          // 13:00–13:30, interval 60: slots 780 (start) and 840 (end+30).
+          // Started: only the post-end slot fires, as the first wrap-up.
           block('prog', 780, 30),
         ],
       },
@@ -188,7 +191,63 @@ describe('buildNudgePlan', () => {
       settings: TEST_SETTINGS,
       now: nowAt(8),
     });
-    expect(plan.map((p) => p.blockId)).toEqual(['prog', 'prog']);
+    expect(plan.map((p) => p.blockId)).toEqual(['prog']);
+    expect(plan[0].fireAt.getHours()).toBe(14);
+    expect(plan[0].copyIndex).toBe(0);
+    // The identifier keeps the original slot index (1), only the copy is renumbered.
+    expect(plan[0].identifier).toBe('takt-2026-11-10-prog-1');
+  });
+
+  it('renumbers copyIndex past quiet-hour skips instead of jumping', () => {
+    // 06:30–07:00: slot 390 is inside quiet hours, slot 450 is not.
+    // The surviving nudge is the first one actually scheduled: copy 0.
+    const plan = buildNudgePlan({
+      blocksByDate: {
+        [WEDNESDAY]: [block('early', 390, 30)],
+      },
+      completions: [],
+      settings: TEST_SETTINGS,
+      now: nowAt(8),
+    });
+    expect(plan).toHaveLength(1);
+    expect(plan[0].copyIndex).toBe(0);
+    expect(plan[0].identifier).toBe('takt-2026-11-11-early-1');
+  });
+
+  it('started blocks with maxNudgesPerBlock 1 still get one wrap-up at the end', () => {
+    // 09:00–09:30, max 1: the only slot is the start, which the started
+    // filter drops — the guarantee adds a single wrap-up at 09:30.
+    const plan = buildNudgePlan({
+      blocksByDate: { [TUESDAY]: [block('a', 540, 30)] },
+      completions: [{ blockId: 'a', date: TUESDAY, status: 'progress' }],
+      settings: { ...TEST_SETTINGS, maxNudgesPerBlock: 1 },
+      now: nowAt(8),
+    });
+    expect(plan).toHaveLength(1);
+    expect(plan[0].fireAt.getHours()).toBe(9);
+    expect(plan[0].fireAt.getMinutes()).toBe(30);
+    expect(plan[0].wrapUp).toBe(true);
+    expect(plan[0].copyIndex).toBe(0);
+    expect(plan[0].totalForBlock).toBe(1);
+    expect(copyForPlanItem(plan[0]).title).toContain('almost there');
+  });
+
+  it('covers a true rolling 48h, not just today + tomorrow as calendar days', () => {
+    // Now Tuesday 23:00: Thursday 09:00 is 34h away (inside 48h),
+    // Thursday 23:30 is 48.5h away (outside).
+    const plan = buildNudgePlan({
+      blocksByDate: {
+        [WEDNESDAY]: [block('wed', 540, 30)],
+        '2026-11-12': [block('thu-am', 540, 30), block('thu-late', 1410, 30)],
+      },
+      completions: [],
+      settings: TEST_SETTINGS,
+      now: nowAt(23),
+    });
+    const ids = plan.map((p) => p.blockId);
+    expect(ids).toContain('wed');
+    expect(ids).toContain('thu-am');
+    expect(ids).not.toContain('thu-late');
   });
 
   it('respects doNotNudge', () => {
@@ -218,6 +277,55 @@ describe('buildNudgePlan', () => {
     expect(plan.map((p) => p.blockId)).toEqual(['early']);
     expect(plan[0].fireAt.getHours()).toBe(7);
     expect(plan[0].fireAt.getMinutes()).toBe(30);
+    // The surviving nudge is the first one actually scheduled, but its
+    // earlier slot was dropped — and it fires after the block ended — so
+    // the copy must be the firmer "gentle push", not "starts now" or
+    // "still time to start".
+    expect(plan[0].firstSlotSkipped).toBe(true);
+    expect(plan[0].pastEnd).toBe(true);
+    expect(plan[0].totalForBlock).toBe(1);
+    expect(copyForPlanItem(plan[0]).title).toContain('gentle push');
+  });
+
+  it('dates post-midnight slots on the day they actually fire', () => {
+    // 23:30–23:55, interval 60: slots 1410 (23:30) and 1470 (00:30 next
+    // day). Quiet hours moved out of the way so both survive.
+    const plan = buildNudgePlan({
+      blocksByDate: { [TUESDAY]: [block('late', 1410, 25)] },
+      completions: [],
+      settings: {
+        ...TEST_SETTINGS,
+        quietHoursStart: '03:00',
+        quietHoursEnd: '04:00',
+      },
+      now: nowAt(20),
+    });
+    expect(plan).toHaveLength(2);
+    expect(plan[0].date).toBe(TUESDAY);
+    expect(plan[0].fireAt.getHours()).toBe(23);
+    expect(plan[0].fireAt.getMinutes()).toBe(30);
+    expect(plan[1].date).toBe(WEDNESDAY);
+    expect(plan[1].identifier).toBe('takt-2026-11-11-late-1');
+    expect(plan[1].fireAt.getHours()).toBe(0);
+    expect(plan[1].fireAt.getMinutes()).toBe(30);
+  });
+
+  it('clamps corrupt settings instead of zeroing or bursting nudges', () => {
+    const plan = buildNudgePlan({
+      blocksByDate: { [TUESDAY]: [block('a', 540, 30)] },
+      completions: [],
+      settings: {
+        ...TEST_SETTINGS,
+        nudgeIntervalMin: 0,
+        perDayNudgeCap: 0,
+        maxNudgesPerBlock: 99,
+      },
+      now: nowAt(8),
+    });
+    // Interval falls back to 7, cap to 40, max to 12: slots 540..617 step 7.
+    expect(plan).toHaveLength(12);
+    const times = plan.map((p) => p.fireAt.getTime());
+    expect(new Set(times).size).toBe(12);
   });
 
   it('enforces the per-day cap, earliest first', () => {

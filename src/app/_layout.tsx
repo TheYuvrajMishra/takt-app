@@ -1,7 +1,7 @@
 // Takt — root layout: gesture handler root, font loading, grain overlay,
 // notification handler stub, expo-router Stack.
 import { useEffect } from 'react';
-import { View } from 'react-native';
+import { AppState, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as Notifications from 'expo-notifications';
@@ -9,17 +9,18 @@ import { useTaktFonts } from '../theme/fonts';
 import { GrainOverlay } from '../components/GrainOverlay';
 import { colors } from '../theme/tokens';
 import { useStore } from '../store/useStore';
-import { initNudges, registerNudgeResponseListener } from '../lib/nudge';
+import { initNudges, registerNudgeResponseListener, rescheduleIfPermitted } from '../lib/nudge';
 import { shouldShowOnboarding } from './onboarding';
 
-// Notification handler stub: Worker A (nudge engine) owns the real behavior.
-// Registered here so the app never crashes on a delivered notification.
+// Notification handler: this module is the ONE owner of the handler.
+// (nudge.ts and onboarding used to set it too, disagreeing on
+// shouldPlaySound — visiting onboarding silently re-muted nudges.)
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
     shouldShowBanner: true,
     shouldShowList: true,
-    shouldPlaySound: false,
+    shouldPlaySound: true,
     shouldSetBadge: false,
   }),
 });
@@ -39,13 +40,53 @@ export default function RootLayout() {
     }
   }, [fontError]);
 
-  // Load persisted data + wire the nudge engine once.
+  // Load persisted data, THEN wire the nudge engine: initNudges() plans
+  // from the store, so starting it before load() finishes schedules an
+  // empty window (a first-launch coin-flip that left zero nudges).
   useEffect(() => {
-    if (!hydrated) void load();
-    void initNudges();
-    const sub = registerNudgeResponseListener();
-    return () => sub.remove();
+    let cancelled = false;
+    (async () => {
+      try {
+        if (!hydrated) await load();
+        if (!cancelled) await initNudges();
+      } catch (e) {
+        console.warn('Takt init failed', e);
+      }
+    })();
+    const sub = registerNudgeResponseListener((result) => {
+      if (result === 'opened') router.replace('/(tabs)');
+    });
+    return () => {
+      cancelled = true;
+      sub.remove();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Belt and braces for the same race: whenever hydration lands, rebuild
+  // the nudge window from the real data (idempotent; no-ops when empty).
+  useEffect(() => {
+    if (hydrated) {
+      void rescheduleIfPermitted().catch((e) => {
+        console.warn('Takt reschedule failed', e);
+      });
+    }
+  }, [hydrated]);
+
+  // Rolling 48h window maintenance: whenever the app returns to the
+  // foreground, rebuild the nudge window. This rolls the window forward
+  // after the app sat backgrounded, and re-bases fire times on the current
+  // timezone after travel (scheduled DATE triggers are absolute instants).
+  // Silent when notifications are not granted.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        void rescheduleIfPermitted().catch((e) => {
+          console.warn('Takt reschedule failed', e);
+        });
+      }
+    });
+    return () => sub.remove();
   }, []);
 
   // Onboarding gate: first run goes to /onboarding, never blocks the app.

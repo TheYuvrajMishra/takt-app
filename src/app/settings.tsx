@@ -244,9 +244,9 @@ export default function SettingsScreen() {
           label="Max nudges per block"
           value={`${settings.maxNudgesPerBlock}`}
           onDec={() => patch({ maxNudgesPerBlock: Math.max(1, settings.maxNudgesPerBlock - 1) })}
-          onInc={() => patch({ maxNudgesPerBlock: Math.min(30, settings.maxNudgesPerBlock + 1) })}
+          onInc={() => patch({ maxNudgesPerBlock: Math.min(12, settings.maxNudgesPerBlock + 1) })}
           decDisabled={settings.maxNudgesPerBlock <= 1}
-          incDisabled={settings.maxNudgesPerBlock >= 30}
+          incDisabled={settings.maxNudgesPerBlock >= 12}
         />
         <View style={styles.divider} />
         <Stepper
