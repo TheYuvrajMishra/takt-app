@@ -75,18 +75,4 @@ describe('BlockCard worklet safety', () => {
     expect(SRC).toContain('Gesture.Exclusive(Gesture.Simultaneous(hold, pan), tap)');
     expect(SRC).not.toContain('Gesture.Exclusive(hold, pan, tap)');
   });
-
-  it('drives top/height from the live hour-height shared value, not state', () => {
-    // Smooth pinch (2026-11-10): the old code passed a plain hourHeight
-    // number and re-rendered the whole calendar on every pinch frame.
-    // The animated style must read hourHeightSV.value for top/height so
-    // a pinch re-lays the card on the UI thread.
-    expect(SRC).toContain('hourHeightSV: SharedValue<number>');
-    expect(SRC).toContain('top: (blockStartMin / 60) * hourHeightSV.value');
-    expect(SRC).toContain('height: Math.max(28, (blockDurationMin / 60) * hourHeightSV.value)');
-    expect(SRC).toContain('hourHeightSV.value');
-    // And the px<->min conversions in the drag/resize worklets read the
-    // shared value too (never a stale destructured number).
-    expect(SRC).not.toContain('(e.translationY / hourHeight)');
-  });
 });

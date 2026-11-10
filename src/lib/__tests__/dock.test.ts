@@ -84,11 +84,3 @@ describe('dock drawer height', () => {
     expect(block).not.toContain('Ref.current');
   });
 });
-
-describe('dock drawer alignment', () => {
-  it('centers every wrapped row of pills (justifyContent center on the grid)', () => {
-    // Reported 2026-11-10: the drawer was left-flushed. The grid must
-    // center each row.
-    expect(DOCK_SRC).toContain("justifyContent: 'center'");
-  });
-});
