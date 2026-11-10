@@ -26,6 +26,7 @@
     "plugins": [
       "expo-router",
       "./plugins/with-app-shortcuts",
+      "./plugins/with-apk-installer",
       [
         "expo-notifications",
         {

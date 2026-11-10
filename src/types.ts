@@ -83,7 +83,28 @@ export interface Settings {
   doNotNudgeCategoryIds: string[];
   /** Calendar timeline zoom: hour height in dp (48..240, default 64). Optional so saved settings from older builds still load. */
   calendarHourHeight?: number;
+  /** Auto-updater persistence (Fix 6). Optional so saved settings from older builds still load. */
+  updater?: UpdaterPersisted;
 }
+
+/** Auto-updater persisted state: check throttle, "Later" suppression, what's-new, downloaded build. */
+export interface UpdaterPersisted {
+  lastCheckAt: number;
+  dismissedVersionCode: number;
+  dismissedAt: number;
+  lastSeenVersionCode: number;
+  lastNotes: string;
+  downloadedVersionCode: number;
+}
+
+export const DEFAULT_UPDATER_PERSISTED: UpdaterPersisted = {
+  lastCheckAt: 0,
+  dismissedVersionCode: 0,
+  dismissedAt: 0,
+  lastSeenVersionCode: 0,
+  lastNotes: '',
+  downloadedVersionCode: 0,
+};
 
 export const DEFAULT_SETTINGS: Settings = {
   nudgeIntervalMin: 7,
@@ -98,6 +119,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultDoNotNudge: false,
   doNotNudgeCategoryIds: ['cat-sleep'],
   calendarHourHeight: 64,
+  updater: DEFAULT_UPDATER_PERSISTED,
 };
 
 export const DEFAULT_DURATION_MIN = 25;

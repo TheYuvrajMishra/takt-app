@@ -11,6 +11,8 @@ import { LayoutProvider } from '../components/layout';
 import { colors } from '../theme/tokens';
 import { useStore } from '../store/useStore';
 import { initNudges, registerNudgeResponseListener, rescheduleIfPermitted } from '../lib/nudge';
+import { UpdateSheet, WhatsNewSheet } from '../components/UpdateSheet';
+import { useUpdaterStore } from '../lib/updater';
 import { shouldShowOnboarding } from './onboarding';
 
 // Notification handler: this module is the ONE owner of the handler.
@@ -50,6 +52,9 @@ export default function RootLayout() {
       try {
         if (!hydrated) await load();
         if (!cancelled) await initNudges();
+        // Auto-updater housekeeping (Fix 6): what's-new card + stale-APK
+        // cleanup + the throttled launch check. Never blocks launch.
+        if (!cancelled) await useUpdaterStore.getState().runLaunchHousekeeping();
       } catch (e) {
         console.warn('Takt init failed', e);
       }
@@ -79,11 +84,18 @@ export default function RootLayout() {
   // after the app sat backgrounded, and re-bases fire times on the current
   // timezone after travel (scheduled DATE triggers are absolute instants).
   // Silent when notifications are not granted.
+  // The updater piggybacks the same return: if the user came back from
+  // the installer or the system setting, continue the install once;
+  // otherwise run the throttled update check.
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         void rescheduleIfPermitted().catch((e) => {
           console.warn('Takt reschedule failed', e);
+        });
+        const updater = useUpdaterStore.getState();
+        void updater.handleReturnFromInstall().then(() => {
+          void updater.checkForUpdates(false).catch(() => undefined);
         });
       }
     });
@@ -113,6 +125,8 @@ export default function RootLayout() {
           <Stack.Screen name="onboarding" />
           <Stack.Screen name="settings" />
         </Stack>
+        <UpdateSheet />
+        <WhatsNewSheet />
         <GrainOverlay />
       </LayoutProvider>
     </GestureHandlerRootView>

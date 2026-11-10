@@ -32,6 +32,7 @@ import { ScrollScreen } from '../../components/layout';
 import { RadialMenu } from '../../components/RadialMenu';
 import { EndOfDaySheet } from '../../components/EndOfDaySheet';
 import { CategoryIcon } from '../../components/CategoryIcon';
+import { formatSize, useUpdaterStore } from '../../lib/updater';
 
 function greetingFor(hour: number): string {
   if (hour < 5) return 'Up late';
@@ -286,6 +287,10 @@ export default function TodayScreen() {
         <Text style={styles.greeting}>{greetingFor(now.getHours())}</Text>
         <Text style={styles.clock}>{clock}</Text>
         <Text style={styles.dateLine}>{dateLine}</Text>
+
+        {/* Update banner (Fix 6): calm, non-blocking, never interrupts a
+            task or a drag — just a row that opens the update sheet. */}
+        <UpdateBanner />
 
         {/* Hero: discipline score + current task + Done */}
         <Card color={colors.butter} style={styles.hero}>
@@ -625,6 +630,46 @@ function SheetAction({ label, onPress }: { label: string; onPress: () => void })
   );
 }
 
+/** Calm update banner (Fix 6): shows only when an update is pending or
+    downloading — a tap opens the update sheet. Never a modal, never in
+    the way of a drag. */
+function UpdateBanner() {
+  const status = useUpdaterStore((s) => s.status);
+  const remote = useUpdaterStore((s) => s.remote);
+  const progress = useUpdaterStore((s) => s.progress);
+  const openSheet = useUpdaterStore((s) => s.openSheet);
+  if (!remote) return null;
+  if (status === 'available') {
+    return (
+      <Pressable style={styles.updateBanner} onPress={openSheet} accessibilityRole="button">
+        <Text style={styles.updateBannerText}>
+          Update ready · build {remote.versionCode} ({formatSize(remote.sizeBytes)})
+        </Text>
+        <Text style={styles.updateBannerAction}>View</Text>
+      </Pressable>
+    );
+  }
+  if (status === 'downloading') {
+    return (
+      <Pressable style={styles.updateBanner} onPress={openSheet} accessibilityRole="button">
+        <Text style={styles.updateBannerText}>
+          Downloading update · {Math.round(progress * 100)}%
+        </Text>
+        <Text style={styles.updateBannerAction}>View</Text>
+      </Pressable>
+    );
+  }
+  if (status === 'ready') {
+    return (
+      <Pressable style={styles.updateBanner} onPress={openSheet} accessibilityRole="button">
+        <Text style={styles.updateBannerText}>Update downloaded — ready to install</Text>
+        <Text style={styles.updateBannerAction}>Install</Text>
+      </Pressable>
+    );
+  }
+  return null;
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.cloud },
   scrollContent: {
@@ -652,6 +697,18 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: spacing.lg,
   },
+  updateBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.paper,
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 11,
+    marginBottom: spacing.md,
+  },
+  updateBannerText: { fontFamily: fonts.medium, fontSize: 14, color: colors.carbon },
+  updateBannerAction: { fontFamily: fonts.semibold, fontSize: 14, color: colors.carbon },
   hero: { width: '100%', alignItems: 'center', paddingVertical: spacing.lg },
   heroLabel: { fontFamily: fonts.medium, fontSize: 14, color: colors.carbon, opacity: 0.6 },
   score: { fontFamily: fonts.regular, fontSize: 110, lineHeight: 118, color: colors.carbon },

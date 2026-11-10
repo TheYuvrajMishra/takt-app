@@ -8,6 +8,11 @@ import { DEFAULT_CATEGORIES, type Settings } from '../types';
 import { CategoryIcon } from '../components/CategoryIcon';
 import { mergeBackupSettings } from '../lib/backup';
 import { useStore } from '../store/useStore';
+import {
+  formatSize,
+  installedVersionCode,
+  useUpdaterStore,
+} from '../lib/updater';
 
 // Settings live in the zustand store (persisted via sqlite), including the
 // "Do not nudge" defaults below.
@@ -95,6 +100,13 @@ export default function SettingsScreen() {
   const storeCategories = useStore((s) => s.categories);
   const lastToast = useStore((s) => s.lastToast);
   const [toast, setToast] = useState<string | null>(null);
+  // Auto-updater state (Fix 6): the pending update always shows here,
+  // even when "Later" was tapped on the sheet.
+  const updateStatus = useUpdaterStore((s) => s.status);
+  const updateRemote = useUpdaterStore((s) => s.remote);
+  const updateError = useUpdaterStore((s) => s.error);
+  const checkForUpdates = useUpdaterStore((s) => s.checkForUpdates);
+  const openUpdateSheet = useUpdaterStore((s) => s.openSheet);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -359,12 +371,56 @@ export default function SettingsScreen() {
       </View>
       <Text style={styles.hint}>Backup is a JSON file saved on this device. No spreadsheets, ever.</Text>
 
-      <Text style={styles.sectionTitle}>About</Text>
+      <Text style={styles.sectionTitle}>App updates</Text>
       <View style={styles.card}>
         <View style={styles.row}>
           <Text style={styles.rowLabel}>Takt</Text>
-          <Text style={styles.version}>Version 1.0.0</Text>
+          <Text style={styles.version}>
+            Version 1.0.0{installedVersionCode() > 0 ? ` (build ${installedVersionCode()})` : ''}
+          </Text>
         </View>
+        {updateRemote && (updateStatus === 'available' || updateStatus === 'ready' || updateStatus === 'downloading') ? (
+          <>
+            <View style={styles.divider} />
+            <Pressable style={styles.actionRow} onPress={openUpdateSheet}>
+              <Text style={styles.actionLabel}>
+                Update ready — build {updateRemote.versionCode} ({formatSize(updateRemote.sizeBytes)})
+              </Text>
+              <Text style={styles.actionChevron}>{'>'}</Text>
+            </Pressable>
+          </>
+        ) : (
+          <>
+            <View style={styles.divider} />
+            <Pressable
+              style={styles.actionRow}
+              onPress={() => {
+                if (updateStatus === 'checking') return;
+                void checkForUpdates(true).then(() => {
+                  if (useUpdaterStore.getState().status === 'idle') {
+                    showToast('You’re on the latest build.');
+                  }
+                });
+              }}
+            >
+              <Text style={styles.actionLabel}>
+                {updateStatus === 'checking' ? 'Checking for updates…' : 'Check for updates'}
+              </Text>
+              <Text style={styles.actionChevron}>{'>'}</Text>
+            </Pressable>
+          </>
+        )}
+        {updateStatus === 'error' && updateError ? (
+          <Text style={styles.hint}>{updateError}</Text>
+        ) : null}
+        <Text style={styles.hint}>
+          Updates install inside the app — no need to leave Takt. Your phone asks once to confirm
+          the install; that is Android’s own check.
+        </Text>
+      </View>
+
+      <Text style={styles.sectionTitle}>About</Text>
+      <View style={styles.card}>
         <Text style={styles.hint}>Your day, nudged into shape.</Text>
       </View>
 
