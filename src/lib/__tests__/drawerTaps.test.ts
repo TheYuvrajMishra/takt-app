@@ -1,14 +1,15 @@
 // Regression guards for "nothing clickable in any drawer" (2026-11-10).
-// Two causes, two rounds:
-// 1. (v23) The Sheet's body/header Pans had NO activation threshold, so
-//    they activated on the tap's finger jitter and claimed the touch —
-//    every button inside a sheet stopped responding.
-// 2. (v25) The v23 fix used only activeOffsetY, which guards the Y axis:
-//    a diagonal tap jitter with a horizontal component still activated
-//    the Pan, so the buttons in the update sheet and the calendar create
-//    sheet stayed dead. The threshold must cover BOTH axes (minDistance).
-// 3. A dock pill had NO tap action at all (hold-only by design), so a
-//    tap on a pill did nothing and the drawer read as dead.
+// The bug survived TWO threshold tunings, so the approach changed:
+// thresholds assume a Pan cleanly releases a sub-threshold touch to the
+// responder; it does not. The structural fix is that NO Pan sits over
+// the sheet body at all — the body is a plain RN ScrollView, and the
+// only drag in the sheet is the header Pan (which holds no buttons).
+// History:
+// 1. (v23) The Sheet's body/header Pans had NO threshold, so they
+//    activated on the tap's finger jitter and claimed the touch.
+// 2. (v25) activeOffsetY guarded the Y axis only; a diagonal tap
+//    jitter still activated the Pan.
+// 3. (v26) The bodyPan is REMOVED. No threshold, no Pan over buttons.
 import { describe, expect, it } from 'vitest';
 
 // eslint-disable-next-line import/no-unresolved
@@ -20,13 +21,25 @@ import TODAY_SRC from '../../app/(tabs)/index.tsx?raw';
 // eslint-disable-next-line import/no-unresolved
 import CAL_SRC from '../../app/(tabs)/calendar.tsx?raw';
 
-describe('sheet drags do not swallow taps', () => {
-  it('bodyPan and headerPan need a BOTH-axes threshold (minDistance), not a Y-only one', () => {
-    const hits = SHEET_SRC.match(/\.minDistance\(10\)/g) ?? [];
-    expect(hits.length).toBeGreaterThanOrEqual(2);
-    // No Y-only threshold left on the sheet Pans: activeOffsetY alone
-    // leaves the X axis open to a diagonal tap jitter.
-    expect(SHEET_SRC).not.toContain('.activeOffsetY([-10, 10])');
+describe('no Pan sits over the sheet body', () => {
+  it('there is no bodyPan at all', () => {
+    expect(SHEET_SRC).not.toContain('bodyPan');
+    expect(SHEET_SRC).not.toContain('simultaneousWithExternalGesture');
+  });
+
+  it('the body ScrollView is the plain React Native one, not gesture-handler', () => {
+    expect(SHEET_SRC).toContain("import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';");
+    expect(SHEET_SRC).not.toContain("ScrollView,\n} from 'react-native-gesture-handler';");
+  });
+
+  it('the only GestureDetector in the sheet wraps the header, never the body', () => {
+    const detectors = SHEET_SRC.match(/<GestureDetector/g) ?? [];
+    expect(detectors.length).toBe(1);
+    expect(SHEET_SRC).toContain('<GestureDetector gesture={headerPan}>');
+  });
+
+  it('the header Pan (no buttons under it) still has a both-axes threshold', () => {
+    expect(SHEET_SRC).toContain('.minDistance(10)');
   });
 
   it('the dock closePan is guarded on both axes too', () => {

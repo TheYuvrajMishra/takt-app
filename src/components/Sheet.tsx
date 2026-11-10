@@ -7,27 +7,29 @@
 // drawer ever re-implements it.
 //
 // Behaviour:
-// - Handle + header are always draggable; the body scrolls, and a body
-//   drag only moves the sheet when the inner scroll is at the top.
-// - Release past ~30% of the sheet height OR with downward velocity
-//   >~800px/s closes (timing 240ms, same bezier, no bounce); otherwise
-//   it settles back (or to the nearest snap point, when given).
-// - Backdrop fades with the drag; backdrop tap and the hardware back
-//   button close.
+// - Handle + header are draggable (the ONLY drag in the sheet); backdrop
+//   tap and the hardware back button close.
+// - The body is a PLAIN React Native ScrollView with NO gesture on it.
+//   That is deliberate, and it is the fix for the dead-buttons bug:
+//   the body used to be wrapped in a GestureDetector carrying a Pan
+//   (drag down at the top to close). That Pan sat above every button,
+//   and RNGH intercepts touches at the native level for the whole
+//   subtree — two threshold tunings (v23 activeOffsetY, v25 minDistance)
+//   did NOT restore taps. Thresholds assume the Pan cleanly releases a
+//   sub-threshold touch to the responder; it does not. So the Pan is
+//   gone from the body entirely: the buttons are plain Pressables in a
+//   plain ScrollView, and nothing above them can claim the touch.
+//   The trade is that the body no longer drags the sheet down — the
+//   header drag + backdrop + back button close it. Do NOT re-add a Pan
+//   over the body; that is the bug coming back.
 import type { ReactNode } from 'react';
-import { useEffect, useRef } from 'react';
-import { Modal, Pressable, StyleSheet, View } from 'react-native';
+import { useEffect } from 'react';
+import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Text } from './TText';
 import { PaperTexture } from './PaperTexture';
-import {
-  Gesture,
-  GestureDetector,
-  GestureHandlerRootView,
-  ScrollView,
-} from 'react-native-gesture-handler';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
   runOnJS,
-  useAnimatedScrollHandler,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
@@ -56,15 +58,9 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 export function Sheet({ visible, onClose, title, scopeLabel, snapPoints, children }: SheetProps) {
   const translateY = useSharedValue(0);
   const sheetH = useSharedValue(0);
-  const scrollY = useSharedValue(0);
   const reducedMotion = useAppReducedMotion();
   const close = onClose;
   const snaps = snapPoints;
-  // Lets the sheet-drag Pan run at the same time as the body's native
-  // scroll gesture; the scrollY check below decides which one wins.
-  // (Untyped on purpose: gesture-handler's external-gesture ref accepts
-  // the native view ref, whose exact type varies by RN version.)
-  const scrollViewRef = useRef<any>(null); // eslint-disable-line @typescript-eslint/no-explicit-any
 
   // Slide up on open; reset when closed.
   useEffect(() => {
@@ -123,14 +119,11 @@ export function Sheet({ visible, onClose, title, scopeLabel, snapPoints, childre
     translateY.value = withTiming(target, { duration: SHEET_MS, easing: DECEL });
   };
 
-  // The header drag needs a threshold: without one the Pan activates on
-  // the finger's first jitter and swallows taps on anything in the
-  // header. It must be minDistance (BOTH axes): the v23 fix used only
-  // activeOffsetY, which guards the Y axis — a diagonal tap jitter with
-  // a horizontal component still activated the Pan, so the buttons in
-  // the update sheet and the calendar create sheet stayed dead (reported
-  // again 2026-11-10). A tap moves <10dp in any direction; a deliberate
-  // drag moves more.
+  // The header drag is the sheet's only drag. It needs a threshold:
+  // without one the Pan activates on the finger's first jitter. It must
+  // be minDistance (BOTH axes): a Y-only threshold leaves the X axis
+  // open to a diagonal tap jitter. The header holds no buttons, so this
+  // Pan can never swallow one — that is why it is allowed to stay.
   const headerPan = Gesture.Pan()
     .minDistance(10)
     .onUpdate((e) => {
@@ -139,35 +132,6 @@ export function Sheet({ visible, onClose, title, scopeLabel, snapPoints, childre
     .onEnd((e) => {
       settle(e.translationY, e.velocityY);
     });
-
-  // Body drag coexists with the inner ScrollView: it only moves the sheet
-  // while the scroll is pinned at the top. It MUST have a minDistance
-  // threshold on BOTH axes (same Y-only gap as the header Pan above):
-  // a Pan with no threshold, or a threshold on one axis only, activates
-  // on the tap's finger jitter and claims the touch, so every button
-  // inside the sheet stops responding. A tap moves <10dp, so it falls
-  // through to the button; a real drag moves more.
-  const bodyPan = Gesture.Pan()
-    .minDistance(10)
-    .simultaneousWithExternalGesture(scrollViewRef)
-    .onUpdate((e) => {
-      if (scrollY.value <= 0) {
-        translateY.value = Math.max(0, e.translationY);
-      }
-    })
-    .onEnd((e) => {
-      if (scrollY.value <= 0) {
-        settle(e.translationY, e.velocityY);
-      } else {
-        translateY.value = withTiming(0, { duration: SHEET_MS, easing: DECEL });
-      }
-    });
-
-  const onScroll = useAnimatedScrollHandler({
-    onScroll: (e) => {
-      scrollY.value = e.contentOffset.y;
-    },
-  });
 
   const sheetStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: translateY.value }],
@@ -200,18 +164,16 @@ export function Sheet({ visible, onClose, title, scopeLabel, snapPoints, childre
               {scopeLabel ? <Text style={styles.scope}>{scopeLabel}</Text> : null}
             </View>
           </GestureDetector>
-          <GestureDetector gesture={bodyPan}>
-            <ScrollView
-              ref={scrollViewRef}
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.content}
-              keyboardShouldPersistTaps="handled"
-              onScroll={onScroll}
-              scrollEventThrottle={16}
-            >
-              {children}
-            </ScrollView>
-          </GestureDetector>
+          {/* The body is a plain ScrollView with NO GestureDetector on
+              it — see the header comment. Any Pan here is the dead-
+              buttons bug coming back. */}
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.content}
+            keyboardShouldPersistTaps="handled"
+          >
+            {children}
+          </ScrollView>
           {/* Sheets get the linen weave, not the card grain. */}
           <PaperTexture kind="linen" radius={radii.sheet} />
         </Animated.View>
