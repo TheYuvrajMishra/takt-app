@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Text } from '../../components/TText';
 import Svg, { Circle, Line } from 'react-native-svg';
 import { CategoryIcon } from '../../components/CategoryIcon';
+import { Sheet } from '../../components/Sheet';
+import { ScrollScreen } from '../../components/layout';
 import { colors, fonts, hairline, radii, spacing, categoryColorHex, patternForCategory } from '../../theme/tokens';
 import type { PatternKind } from '../../theme/tokens';
-import { useAppReducedMotion } from '../../theme/motion';
 import { dateKey } from '../../lib/core';
 import {
   computeStreaks,
@@ -86,7 +87,6 @@ function HatchCell({
 }
 
 export default function StatsScreen() {
-  const reducedMotion = useAppReducedMotion();
   const [monthOffset, setMonthOffset] = useState(0);
   const [selectedCats, setSelectedCats] = useState<string[]>([]);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
@@ -178,7 +178,7 @@ export default function StatsScreen() {
   const topFocusId = focus[0]?.categoryId;
 
   return (
-    <ScrollView style={styles.root} contentContainerStyle={styles.content}>
+    <ScrollScreen contentContainerStyle={styles.content}>
       <Text style={styles.title}>Stats</Text>
       <Text style={styles.subtitle}>Your discipline, in one view.</Text>
 
@@ -345,59 +345,59 @@ export default function StatsScreen() {
       </View>
 
       {/* Day summary sheet */}
-      <Modal visible={summary !== null} transparent animationType={reducedMotion ? 'none' : 'slide'} onRequestClose={() => setSelectedDate(null)}>
-        <Pressable style={styles.backdrop} onPress={() => setSelectedDate(null)} accessibilityLabel="Close day summary" />
-        <View style={styles.sheet}>
-          <View style={styles.handle} />
-          {summary && (
-            <>
-              <Text style={styles.sheetTitle}>
-                {new Date(summary.date + 'T12:00:00').toLocaleDateString(undefined, {
-                  weekday: 'long',
-                  month: 'long',
-                  day: 'numeric',
-                })}
-              </Text>
-              <Text style={styles.sheetScore}>{summary.score}</Text>
-              <Text style={styles.sheetScoreLabel}>discipline score</Text>
-              <View style={styles.sheetRow}>
-                <View style={styles.sheetStat}>
-                  <Text style={styles.sheetStatValue}>{summary.done}</Text>
-                  <Text style={styles.sheetStatLabel}>done</Text>
-                </View>
-                <View style={styles.sheetDivider} />
-                <View style={styles.sheetStat}>
-                  <Text style={styles.sheetStatValue}>{summary.missed}</Text>
-                  <Text style={styles.sheetStatLabel}>missed</Text>
-                </View>
-                <View style={styles.sheetDivider} />
-                <View style={styles.sheetStat}>
-                  <Text style={styles.sheetStatValue}>{summary.nudgesNeeded}</Text>
-                  <Text style={styles.sheetStatLabel}>nudges needed</Text>
-                </View>
-                <View style={styles.sheetDivider} />
-                <View style={styles.sheetStat}>
-                  <Text style={styles.sheetStatValue}>{summary.onTimePct}%</Text>
-                  <Text style={styles.sheetStatLabel}>on-time</Text>
-                </View>
+      <Sheet
+        visible={summary !== null}
+        onClose={() => setSelectedDate(null)}
+        title={
+          summary
+            ? new Date(summary.date + 'T12:00:00').toLocaleDateString(undefined, {
+                weekday: 'long',
+                month: 'long',
+                day: 'numeric',
+              })
+            : undefined
+        }
+      >
+        {summary && (
+          <View style={styles.sheetBody}>
+            <Text style={styles.sheetScore}>{summary.score}</Text>
+            <Text style={styles.sheetScoreLabel}>discipline score</Text>
+            <View style={styles.sheetRow}>
+              <View style={styles.sheetStat}>
+                <Text style={styles.sheetStatValue}>{summary.done}</Text>
+                <Text style={styles.sheetStatLabel}>done</Text>
               </View>
-              {summary.total === 0 && (
-                <Text style={styles.emptyText}>No blocks scheduled for this day.</Text>
-              )}
-              <Pressable style={styles.sheetButton} onPress={() => setSelectedDate(null)}>
-                <Text style={styles.sheetButtonText}>Close</Text>
-              </Pressable>
-            </>
-          )}
-        </View>
-      </Modal>
-    </ScrollView>
+              <View style={styles.sheetDivider} />
+              <View style={styles.sheetStat}>
+                <Text style={styles.sheetStatValue}>{summary.missed}</Text>
+                <Text style={styles.sheetStatLabel}>missed</Text>
+              </View>
+              <View style={styles.sheetDivider} />
+              <View style={styles.sheetStat}>
+                <Text style={styles.sheetStatValue}>{summary.nudgesNeeded}</Text>
+                <Text style={styles.sheetStatLabel}>nudges needed</Text>
+              </View>
+              <View style={styles.sheetDivider} />
+              <View style={styles.sheetStat}>
+                <Text style={styles.sheetStatValue}>{summary.onTimePct}%</Text>
+                <Text style={styles.sheetStatLabel}>on-time</Text>
+              </View>
+            </View>
+            {summary.total === 0 && (
+              <Text style={styles.emptyText}>No blocks scheduled for this day.</Text>
+            )}
+            <Pressable style={styles.sheetButton} onPress={() => setSelectedDate(null)}>
+              <Text style={styles.sheetButtonText}>Close</Text>
+            </Pressable>
+          </View>
+        )}
+      </Sheet>
+    </ScrollScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.cloud },
-  content: { padding: spacing.lg, paddingBottom: spacing.xxl },
+  content: { padding: spacing.lg },
   title: { fontFamily: fonts.semibold, fontSize: 34, color: colors.carbon },
   subtitle: { fontFamily: fonts.regular, fontSize: 16, color: colors.carbon, opacity: 0.6, marginBottom: spacing.md },
   chipsRow: { marginHorizontal: -spacing.lg, paddingHorizontal: spacing.lg, marginBottom: spacing.md },
@@ -491,17 +491,7 @@ const styles = StyleSheet.create({
   focusName: { flex: 1, fontFamily: fonts.medium, fontSize: 15, color: colors.carbon },
   focusHours: { fontFamily: fonts.semibold, fontSize: 15, color: colors.carbon },
   focusPct: { fontFamily: fonts.regular, fontSize: 14, color: colors.carbon, opacity: 0.6, width: 44, textAlign: 'right' },
-  backdrop: { flex: 1, backgroundColor: 'rgba(10,10,10,0.35)' },
-  sheet: {
-    backgroundColor: colors.paper,
-    borderTopLeftRadius: radii.sheet,
-    borderTopRightRadius: radii.sheet,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.xl,
-  },
-  handle: { alignSelf: 'center', width: 44, height: 5, borderRadius: 999, backgroundColor: colors.carbon, opacity: 0.2, marginBottom: spacing.md },
-  sheetTitle: { fontFamily: fonts.semibold, fontSize: 20, color: colors.carbon, textAlign: 'center' },
+  sheetBody: { alignItems: 'stretch' },
   sheetScore: { fontFamily: fonts.semibold, fontSize: 64, lineHeight: 72, color: colors.carbon, textAlign: 'center', marginTop: spacing.sm },
   sheetScoreLabel: { fontFamily: fonts.medium, fontSize: 14, color: colors.carbon, opacity: 0.6, textAlign: 'center', marginBottom: spacing.md },
   sheetRow: { flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderBottomWidth: 1, borderColor: hairline, paddingVertical: spacing.md, marginBottom: spacing.md },

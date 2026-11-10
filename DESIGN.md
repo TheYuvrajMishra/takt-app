@@ -22,3 +22,24 @@
 - Heatmap: mono ramp via hatch density; category colors only when a filter is active.
 - Every edit asks scope: "Today only" / "From today onwards" (Calendar adds "This weekday from today" under More). Today mode defaults to Today only.
 - Undo/redo with toast on every edit.
+
+## Layout rules (Fix 3 — the navbar overlap must never come back)
+- ONE layout contract: `src/components/layout.tsx` (`LayoutProvider`,
+  `useBottomInset()`, `useDockBottom()`). It measures the real navbar
+  height (`onLayout` in the tab bar) + the real dock height (collapsed or
+  expanded, reported by the Dock) + the safe-area bottom + a fixed 16dp gap
+  (`LAYOUT_GAP`), and exposes the combined bottom inset everywhere.
+- Every screen MUST use `<Screen>`, `<ScrollScreen>` or `<ListScreen>`.
+  Never a raw `ScrollView` / `FlatList` / `SectionList` at screen level,
+  and never a hand-written `paddingBottom` to clear the navbar/dock.
+  Nested horizontal scrollers (chip rows, timeline strips) are the only
+  exception. Enforced by `src/lib/__tests__/layoutContract.test.ts`.
+- Floating elements (dock, toasts, undo bars, multi-select bar) position
+  from the same context (`useBottomInset()` / `useDockBottom()`), never
+  with hard-coded bottom values.
+- The dock sits above the navbar by construction (`bottom: dockBottom`);
+  the expanded grid also clears the navbar and the safe area.
+- Verify every screen scrolled to the very end on small (360x640) and tall
+  (412x915) viewports, dock collapsed and expanded. Device screenshots are
+  not possible in this VM — verify on a real device before release
+  (see KNOWN_ISSUES.md).

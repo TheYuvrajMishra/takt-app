@@ -28,6 +28,7 @@ import { BlockChip, BLOCK_CHIP_WIDTH } from '../../components/BlockChip';
 import { Sheet } from '../../components/Sheet';
 import { Dock } from '../../components/Dock';
 import type { DockAnchor } from '../../components/Dock';
+import { ScrollScreen } from '../../components/layout';
 import { RadialMenu } from '../../components/RadialMenu';
 import { EndOfDaySheet } from '../../components/EndOfDaySheet';
 import { CategoryIcon } from '../../components/CategoryIcon';
@@ -277,7 +278,7 @@ export default function TodayScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top + 8 }]}>
-      <ScrollView
+      <ScrollScreen
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
@@ -429,7 +430,7 @@ export default function TodayScreen() {
             ) : null}
           </Section>
         ) : null}
-      </ScrollView>
+      </ScrollScreen>
 
       {/* Dock + radial quick-add */}
       <Dock
@@ -437,7 +438,6 @@ export default function TodayScreen() {
         onLongPress={(category, anchor) => setRadial({ category, anchor })}
         onDrop={handleDockDrop}
         onCustomize={() => setToastMsg('Dock customization coming soon.')}
-        style={{ bottom: 84 }}
       />
       {radial ? (
         <RadialMenu
@@ -629,7 +629,6 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.cloud },
   scrollContent: {
     paddingHorizontal: spacing.lg,
-    paddingBottom: 210,
     alignItems: 'center',
   },
   greeting: {

@@ -10,7 +10,7 @@
 // navbar and dock. Floating elements (dock, toasts, undo bars) position
 // themselves from the same context, never with hard-coded bottom values.
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
-import { FlatList, ScrollView, StyleSheet, View, type FlatListProps, type ScrollViewProps, type ViewProps } from 'react-native';
+import { FlatList, ScrollView, StyleSheet, View, type FlatListProps, type ScrollViewInstance, type ScrollViewProps, type ViewProps } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme/tokens';
 
@@ -122,14 +122,17 @@ export function Screen({ chrome = 'tabs', style, children, ...rest }: ScreenProp
 
 export interface ScrollScreenProps extends ScrollViewProps {
   chrome?: 'tabs' | 'none';
+  /** Ref to the underlying ScrollView (e.g. for programmatic scrolling). */
+  scrollRef?: React.Ref<ScrollViewInstance>;
 }
 
 /** Mandatory wrapper for every scrolling screen. */
-export function ScrollScreen({ chrome = 'tabs', contentContainerStyle, style, children, ...rest }: ScrollScreenProps) {
+export function ScrollScreen({ chrome = 'tabs', contentContainerStyle, style, children, scrollRef, ...rest }: ScrollScreenProps) {
   const { bottomInset, safeBottom } = useLayout();
   const pad = chrome === 'tabs' ? bottomInset : safeBottom + LAYOUT_GAP;
   return (
     <ScrollView
+      ref={scrollRef}
       style={[styles.screen, style]}
       contentContainerStyle={[{ paddingBottom: pad }, contentContainerStyle]}
       {...rest}

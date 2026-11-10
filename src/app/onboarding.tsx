@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { Linking, PanResponder, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ScrollScreen } from '../components/layout';
 import { Text, TextInput } from '../components/TText';
 import { useRouter } from 'expo-router';
 import * as Notifications from 'expo-notifications';
@@ -225,7 +226,7 @@ export default function OnboardingScreen({ onDone }: { onDone?: () => void }) {
         Step {step} of {TOTAL_STEPS}
       </Text>
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollScreen chrome="none" contentContainerStyle={styles.content}>
         {step === 1 && (
           <>
             <Text style={styles.title}>Your day, nudged into shape</Text>
@@ -547,7 +548,7 @@ export default function OnboardingScreen({ onDone }: { onDone?: () => void }) {
             </View>
           </>
         )}
-      </ScrollView>
+      </ScrollScreen>
 
       <View style={styles.footer}>
         {step > 1 ? (

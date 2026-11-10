@@ -40,7 +40,7 @@ import {
 import { BlockCard } from '../../components/calendar/BlockCard';
 import { Dock } from '../../components/Dock';
 import { Sheet } from '../../components/Sheet';
-import { useBottomInset } from '../../components/layout';
+import { useBottomInset, ScrollScreen } from '../../components/layout';
 import { useStore } from '../../store/useStore';
 
 type ViewMode = 'day' | '3day' | 'week';
@@ -1262,10 +1262,9 @@ export default function CalendarScreen() {
 
         {/* Hour grid */}
         <GestureDetector gesture={outerGestures}>
-          <ScrollView
-            ref={scrollRef}
+          <ScrollScreen
+            scrollRef={scrollRef}
             style={styles.gridScroll}
-            contentContainerStyle={{ paddingBottom: bottomInset }}
             scrollEnabled={scrollEnabled}
             showsVerticalScrollIndicator={false}
             scrollEventThrottle={16}
@@ -1291,7 +1290,7 @@ export default function CalendarScreen() {
                 {renderGhost()}
               </View>
             </GestureDetector>
-          </ScrollView>
+          </ScrollScreen>
         </GestureDetector>
 
         {/* Multi-select bar */}

@@ -1,5 +1,5 @@
 // Takt — RadialMenu. Press-and-hold a dock node and its subcategories bloom
-// in a circle around the anchor (spring animation). Swipe to one and release
+// in a circle around the anchor (timed bezier bloom, no spring). Swipe to one and release
 // to create it in the earliest empty slot; a haptic tick fires per hover.
 // No subcategories: long-press + release creates the category directly.
 // Keep pressing a selected subcategory and it enters attach/drag mode.
@@ -13,10 +13,10 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withDelay,
-  withSpring,
+  withTiming,
 } from 'react-native-reanimated';
 import { colors, fonts, radii } from '../theme/tokens';
-import { useAppReducedMotion } from '../theme/motion';
+import { DECEL, useAppReducedMotion } from '../theme/motion';
 import { CategoryIcon } from './CategoryIcon';
 import type { Category, Subcategory } from '../types';
 
@@ -176,12 +176,12 @@ function RadialItem({ sub, index, angle, cx, cy, highlighted }: RadialItemProps)
 
   useEffect(() => {
     // Reduced motion: items appear at their final positions instantly,
-    // no staggered spring bloom.
+    // no staggered timed bloom.
     if (reducedMotion) {
       progress.value = 1;
       return;
     }
-    progress.value = withDelay(index * 45, withSpring(1, { damping: 15, stiffness: 240 }));
+    progress.value = withDelay(index * 45, withTiming(1, { duration: 220, easing: DECEL }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reducedMotion, index]);
 

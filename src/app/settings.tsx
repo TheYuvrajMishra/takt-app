@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
+import { Pressable, StyleSheet, Switch, View } from 'react-native';
 import { Text } from '../components/TText';
 import { useRouter } from 'expo-router';
+import { ScrollScreen } from '../components/layout';
 import { colors, fonts, hairline, radii, spacing } from '../theme/tokens';
 import { DEFAULT_CATEGORIES, type Settings } from '../types';
 import { CategoryIcon } from '../components/CategoryIcon';
@@ -227,7 +228,7 @@ export default function SettingsScreen() {
   };
 
   return (
-    <ScrollView style={styles.root} contentContainerStyle={styles.content}>
+    <ScrollScreen chrome="none" contentContainerStyle={styles.content}>
       <Text style={styles.title}>Settings</Text>
 
       <Text style={styles.sectionTitle}>Nudges</Text>
@@ -372,13 +373,13 @@ export default function SettingsScreen() {
           <Text style={styles.toastText}>{toast}</Text>
         </View>
       ) : null}
-    </ScrollView>
+    </ScrollScreen>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.cloud },
-  content: { padding: spacing.lg, paddingBottom: spacing.xxl },
+  content: { padding: spacing.lg },
   title: { fontFamily: fonts.semibold, fontSize: 34, color: colors.carbon, marginBottom: spacing.md },
   sectionTitle: { fontFamily: fonts.semibold, fontSize: 15, color: colors.carbon, marginBottom: 8, marginTop: spacing.sm },
   card: { backgroundColor: colors.paper, borderRadius: radii.cardSm, paddingHorizontal: spacing.md, paddingVertical: 4, marginBottom: spacing.md },

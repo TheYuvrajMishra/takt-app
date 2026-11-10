@@ -1,7 +1,7 @@
-import { Modal, Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { Text } from './TText';
+import { Sheet } from './Sheet';
 import { colors, fonts, hairline, radii, spacing } from '../theme/tokens';
-import { useAppReducedMotion } from '../theme/motion';
 import { dateKey } from '../lib/core';
 
 export interface EndOfDaySheetProps {
@@ -38,7 +38,6 @@ export function EndOfDaySheet({
   firstTaskTomorrow,
   onViewTomorrow,
 }: EndOfDaySheetProps) {
-  const reducedMotion = useAppReducedMotion();
   const label = date ?? dateKey(new Date());
   const readable = new Date(label + 'T12:00:00').toLocaleDateString(undefined, {
     weekday: 'long',
@@ -46,11 +45,8 @@ export function EndOfDaySheet({
     day: 'numeric',
   });
   return (
-    <Modal visible={visible} transparent animationType={reducedMotion ? 'none' : 'slide'} onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close summary" />
-      <View style={styles.sheet}>
-        <View style={styles.handle} />
-        <Text style={styles.kicker}>Day complete — {readable}</Text>
+    <Sheet visible={visible} onClose={onClose} title={`Day complete — ${readable}`}>
+      <View style={styles.body}>
         <Text style={styles.score}>{score}</Text>
         <Text style={styles.scoreLabel}>discipline score</Text>
 
@@ -94,39 +90,12 @@ export function EndOfDaySheet({
           <Text style={styles.ghostButtonText}>Done for today</Text>
         </Pressable>
       </View>
-    </Modal>
+    </Sheet>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(10,10,10,0.35)',
-  },
-  sheet: {
-    backgroundColor: colors.paper,
-    borderTopLeftRadius: radii.sheet,
-    borderTopRightRadius: radii.sheet,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.xl,
-  },
-  handle: {
-    alignSelf: 'center',
-    width: 44,
-    height: 5,
-    borderRadius: 999,
-    backgroundColor: colors.carbon,
-    opacity: 0.2,
-    marginBottom: spacing.md,
-  },
-  kicker: {
-    fontFamily: fonts.medium,
-    fontSize: 14,
-    color: colors.carbon,
-    opacity: 0.6,
-    textAlign: 'center',
-  },
+  body: { gap: 0 },
   score: {
     fontFamily: fonts.semibold,
     fontSize: 84,
