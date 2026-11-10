@@ -97,6 +97,20 @@
   dragging, the section under the finger highlights; on Today the drop
   creates in the earliest empty slot, on Calendar it creates at the drop
   position.
+- A tap on a pill is a QUICK-ADD: it creates the category in the earliest
+  empty slot (no subcategory — the hold + radial is for picking one) and
+  closes the drawer. A pill must respond to a tap: with no tap action, a
+  tap did nothing at all and the drawer read as dead (2026-11-10). The
+  tap is a fast-failing `Gesture.Tap` (maxDuration 250ms, maxDistance
+  10dp), Simultaneous with the hold/pan pair — NOT Exclusive: an
+  Exclusive would block the Pan until the tap failed at 250ms, so the
+  hold-progress ring would not start filling until then.
+- A Pan that sits over tappable content MUST have an activation threshold
+  (`.activeOffsetY([-10, 10])` on the sheet's body/header Pans). A Pan
+  with none activates on the tap's finger jitter and claims the touch,
+  so every button under it stops responding — that is how every button
+  inside a sheet went dead (2026-11-10). A tap moves <10dp and falls
+  through to the button; a real drag moves more.
 - Radial subcategory flow (Today and Calendar), ONE continuous touch —
   hold (300ms) → subcategories bloom → slide the finger to one → hover it
   300ms (`RADIAL_HOVER_MS`) and the drag arms (ghost follows the finger)
