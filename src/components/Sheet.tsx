@@ -123,7 +123,11 @@ export function Sheet({ visible, onClose, title, scopeLabel, snapPoints, childre
     translateY.value = withTiming(target, { duration: SHEET_MS, easing: DECEL });
   };
 
+  // The header drag needs a threshold: without one the Pan activates on
+  // the finger's first jitter and swallows taps on anything in the
+  // header. A tap moves <10dp; a deliberate drag moves more.
   const headerPan = Gesture.Pan()
+    .activeOffsetY([-10, 10])
     .onUpdate((e) => {
       translateY.value = Math.max(0, e.translationY);
     })
@@ -132,8 +136,13 @@ export function Sheet({ visible, onClose, title, scopeLabel, snapPoints, childre
     });
 
   // Body drag coexists with the inner ScrollView: it only moves the sheet
-  // while the scroll is pinned at the top.
+  // while the scroll is pinned at the top. It MUST have an activation
+  // threshold: a Pan with none activates on the tap's finger jitter and
+  // claims the touch, so every button inside the sheet stops responding
+  // (reported 2026-11-10: nothing clickable in any drawer). A tap moves
+  // <10dp, so it falls through to the button; a real drag moves more.
   const bodyPan = Gesture.Pan()
+    .activeOffsetY([-10, 10])
     .simultaneousWithExternalGesture(scrollViewRef)
     .onUpdate((e) => {
       if (scrollY.value <= 0) {

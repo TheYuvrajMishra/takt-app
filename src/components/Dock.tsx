@@ -53,6 +53,11 @@ export interface DockProps {
   categories: Category[];
   /** Hold (no drag) on a node: open the radial menu at the anchor. */
   onLongPress?: (category: Category, anchor: DockAnchor) => void;
+  /** Quick tap on a node: create the category in the earliest empty slot
+   * (no subcategory — the hold + radial is for picking one). A pill must
+   * respond to a tap: with no tap action, a tap did nothing at all and
+   * the drawer read as dead (reported 2026-11-10). */
+  onTap?: (category: Category) => void;
   /** Drag released: category + screen coordinates of the drop. */
   onDrop?: (category: Category, x: number, y: number) => void;
   /** Finger position while a node is being dragged (drives drop-target highlight). */
@@ -81,6 +86,7 @@ const DRAWER_TO_NAV_GAP = 8;
 export function Dock({
   categories,
   onLongPress,
+  onTap,
   onDrop,
   onDragMove,
   onDragAbort,
@@ -238,6 +244,7 @@ export function Dock({
                   onRadialRelease={onRadialRelease}
                   onRadialAbort={onRadialAbort}
                   onLongPress={onLongPress}
+                  onTap={onTap}
                   collapseDrawer={() => animateExpand(false)}
                 />
               ))}
@@ -274,6 +281,8 @@ interface DockNodeProps {
   onRadialRelease?: (x: number, y: number) => void;
   onRadialAbort?: () => void;
   onLongPress?: (category: Category, anchor: DockAnchor) => void;
+  /** Quick tap: create the category in the earliest empty slot. */
+  onTap?: (category: Category) => void;
   /** Close the drawer (called when a hold starts a drag or a radial). */
   collapseDrawer: () => void;
 }
@@ -298,6 +307,7 @@ function DockNode({
   onRadialRelease,
   onRadialAbort,
   onLongPress,
+  onTap,
   collapseDrawer,
 }: DockNodeProps) {
   const reducedMotion = useAppReducedMotion();
@@ -394,7 +404,21 @@ function DockNode({
       runOnJS(onDragCancel)();
     });
 
-  const gesture = Gesture.Simultaneous(longPress, pan);
+  // Quick tap: create the category in the earliest empty slot. It must
+  // fail fast (maxDuration 250ms, maxDistance 10dp) so a hold still arms
+  // the drag or the radial at 300ms instead of firing a tap on release.
+  // It runs Simultaneous with the hold/pan pair (NOT Exclusive): an
+  // Exclusive would block the Pan until the tap failed at 250ms, so the
+  // hold-progress ring would not start filling until then.
+  const tap = Gesture.Tap()
+    .maxDuration(250)
+    .maxDistance(10)
+    .onEnd(() => {
+      runOnJS(collapseDrawer)();
+      if (onTap) runOnJS(onTap)(category);
+    });
+
+  const gesture = Gesture.Simultaneous(tap, longPress, pan);
 
   // Magnify on proximity to the dragged node (by index distance).
   // Timing only — no spring anywhere (see theme/motion).

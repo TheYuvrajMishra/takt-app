@@ -549,6 +549,7 @@ export default function TodayScreen() {
       <Dock
         categories={categories}
         onLongPress={(category, anchor) => radial.openRadial(category, anchor)}
+        onTap={(category) => createInEarliestSlot(category)}
         onDrop={handleDockDrop}
         onDragMove={handleDragMove}
         onDragAbort={clearDragHighlight}
