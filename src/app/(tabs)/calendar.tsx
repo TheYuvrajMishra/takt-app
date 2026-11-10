@@ -88,7 +88,14 @@ const SCOPE_LABELS: Record<Scope, string> = {
   weekday: 'This weekday from today',
 };
 
+/**
+ * Clamp a number into [lo, hi]. Called from the pinch-zoom gesture worklet
+ * as well as the JS thread, so it must be a worklet — a plain function
+ * called from a worklet throws "[Worklets] Tried to synchronously call a
+ * Remote Function" on device (hit 2026-11-10: pinch to zoom crashed).
+ */
 function clamp(v: number, lo: number, hi: number): number {
+  'worklet';
   return Math.max(lo, Math.min(hi, v));
 }
 

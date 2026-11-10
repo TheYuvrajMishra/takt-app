@@ -52,8 +52,12 @@ export function earliestEmptySlot(blocks: Block[], fromMin: number, durationMin:
   return null;
 }
 
-/** Snap minutes to 5-min grid. */
+/** Snap minutes to 5-min grid. Called from gesture worklets (BlockCard
+    drag/resize) as well as the JS thread, so it must be a worklet — a plain
+    function called from a worklet throws "[Worklets] Tried to
+    synchronously call a Remote Function" on device (hit 2026-11-10). */
 export function snap5(min: number): number {
+  'worklet';
   return Math.round(min / 5) * 5;
 }
 
