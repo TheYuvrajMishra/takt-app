@@ -43,3 +43,65 @@
   (412x915) viewports, dock collapsed and expanded. Device screenshots are
   not possible in this VM — verify on a real device before release
   (see KNOWN_ISSUES.md).
+
+## Motion law (Fix 4 — navbar)
+- Timing ONLY, `Easing.bezier(0.22, 1, 0.36, 1)` (`DECEL` in
+  `src/theme/motion.ts`), ~300ms (`NAV_MS`). NO spring / overshoot / bounce
+  anywhere in the nav — no `withSpring` remains in `src`.
+- The active pill morphs: its x and width interpolate together on the UI
+  thread, measured per tab via `onLayout`. Icons cross-fade outline →
+  filled; labels reveal (opacity + small slide). Pressed tab scales to
+  0.97 with timing; light haptic on tab change.
+- Screen transitions: cross-fade + subtle 10px translate in the direction
+  of travel (custom `sceneStyleInterpolator` + 280ms timing spec — the
+  built-in 'shift' uses 50px, too far). Reduce-motion falls back to quick
+  120ms fades. Total feedback under 400ms; tab screens stay mounted, so
+  each keeps its scroll position.
+
+## Selection law (Fix 1 — dock)
+- Selection NEVER comes from a tap or a swipe. It takes a press-and-hold
+  of `HOLD_MS = 300` (`src/theme/motion.ts`), cancelled by >8px of movement
+  (`HOLD_CANCEL_PX`). While holding, the chip scales to 0.96 and a thin
+  ring fills; a light haptic fires at activation.
+- The dock is a fixed row of the 5–6 most-used chips (usage-ordered, most
+  important at both ends) with a drag handle; swipe up on the dock/handle
+  (or tap the handle) expands it to a grid of all chips. Swipe down or tap
+  outside collapses. Grid chips still hold-to-drag; the radial subcategory
+  menu still opens from a hold.
+
+## Calendar blocks (Fix 2)
+- Blocks render adaptively by height (`variantForHeight`): tiny blocks
+  (≤32dp) are never empty — they show "Title - 9:00" on one line; larger
+  blocks add range, category icon, notes preview. Overlapping tiny blocks
+  get side-by-side lanes (`assignLanes`).
+- A tap opens a detail peek sheet (full title, range, duration, category,
+  notes; edit / duplicate / delete / mark done / Select). Dragging and
+  resizing need a 300ms hold first (haptic + lift), snap to 5 minutes with
+  a haptic tick per snap, and ask scope afterwards ("Today only" /
+  "From today onwards") with undo. Pinch zoom changes hour height
+  48→240dp and is persisted in Settings.
+
+## Sheets (Fix 5)
+- ONE shared `<Sheet>` for every drawer. It renders
+  `GestureHandlerRootView` inside the Modal (that was the root cause of
+  undraggable sheets), the handle + header always drag, and the body scroll
+  and the sheet drag coexist (drag-down closes only when the inner scroll
+  is at the top). Close past ~30% height or velocity >800px/s, timing
+  240ms with `DECEL`; backdrop fades with the drag; hardware back and
+  backdrop tap close.
+
+## Auto-updater (Fix 6)
+- Every CI release publishes `version.json` next to the APK
+  (versionCode, versionName, apkUrl, sha256, sizeBytes, notes,
+  publishedAt). The app checks on launch + foreground (≤ once/6h, manual
+  check in Settings), compares versionCode, and offers a non-blocking
+  update: sheet + Today banner + Settings row. "Later" suppresses 24h for
+  that version; checks fail silently offline.
+- Download in-app with progress + cancel; the file is verified by size +
+  SHA-256 (pure-TS incremental hash, NIST-vector tested) before anything
+  is offered to install. Install goes through Android's own package
+  installer via a FileProvider content URI; the one manual step is
+  Android's own "allow installs from Takt" confirm, said once in the
+  sheet. The downloaded APK is deleted after the app is replaced. After
+  an update: a "What's new" card from the release notes + nudges
+  rescheduled.
