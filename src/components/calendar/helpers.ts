@@ -45,6 +45,64 @@ export function formatRange(b: Block): string {
   return `${minToTime(b.startMin)} – ${minToTime(b.startMin + b.durationMin)}`;
 }
 
+export type BlockVariant = 'tiny' | 'small' | 'normal' | 'large';
+
+/**
+ * Adaptive block variant by rendered height — pure. A block is never
+ * empty: tiny (<=32dp) shows "Title - 9:00" on one line, small adds the
+ * time on the same line, normal shows title + time range + category,
+ * large adds notes preview + subcategory.
+ */
+export function variantForHeight(height: number): BlockVariant {
+  if (height <= 32) return 'tiny';
+  if (height <= 52) return 'small';
+  if (height <= 96) return 'normal';
+  return 'large';
+}
+
+/**
+ * Side-by-side lanes for overlapping blocks (Google Calendar style), so a
+ * tiny block never hides under a neighbour. Interval partitioning: each
+ * block takes the first lane whose last block already ended. Blocks that
+ * do not overlap anything keep lane 0 of 1 (full width).
+ */
+export interface LaneAssignment {
+  block: Block;
+  lane: number;
+  laneCount: number;
+}
+
+export function assignLanes(blocks: Block[]): LaneAssignment[] {
+  const sorted = [...blocks].sort((a, b) => a.startMin - b.startMin);
+  const laneEnds: number[] = [];
+  const out: LaneAssignment[] = [];
+  for (const b of sorted) {
+    let lane = laneEnds.findIndex((end) => end <= b.startMin);
+    if (lane === -1) {
+      lane = laneEnds.length;
+      laneEnds.push(b.startMin + b.durationMin);
+    } else {
+      laneEnds[lane] = b.startMin + b.durationMin;
+    }
+    out.push({ block: b, lane, laneCount: 0 });
+  }
+  // laneCount = max lanes used by any block overlapping this one.
+  const maxLanes = laneEnds.length;
+  for (const o of out) {
+    let count = 1;
+    for (const other of out) {
+      if (other === o) continue;
+      const overlap =
+        other.block.startMin < o.block.startMin + o.block.durationMin &&
+        o.block.startMin < other.block.startMin + other.block.durationMin;
+      if (overlap) count = Math.max(count, other.lane + 1);
+    }
+    o.laneCount = Math.max(o.lane + 1, count, 1);
+    if (o.laneCount > maxLanes) o.laneCount = maxLanes;
+  }
+  return out;
+}
+
 /**
  * Auto-shift: push every block that overlaps `moved` (or the chain it
  * pushes) down to the first free 5-min slot after it, in start order.

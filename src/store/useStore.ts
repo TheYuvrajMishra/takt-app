@@ -677,6 +677,15 @@ export const useStore = create<TaktState>()((set, get) => {
               : 'Added for this weekday onwards.',
         );
       }
+      // Usage ordering: creating a block from a category makes it more
+      // used, so the dock's most-used row reflects real usage.
+      const cats = get().categories;
+      const cat = cats.find((c) => c.id === input.categoryId);
+      if (cat) {
+        const bumped = { ...cat, usageCount: (cat.usageCount ?? 0) + 1 };
+        set({ categories: cats.map((c) => (c.id === cat.id ? bumped : c)) });
+        void db.bumpCategoryUsage(cat.id).catch(() => {});
+      }
       notifyAfterChange();
     },
 

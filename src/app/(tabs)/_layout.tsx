@@ -5,6 +5,7 @@ import { Text } from '../../components/TText';
 import { Tabs } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, fonts, radii } from '../../theme/tokens';
+import { useNavbarHeightReporter } from '../../components/layout';
 
 const TAB_LABELS: Record<string, string> = {
   index: 'Today',
@@ -21,9 +22,13 @@ interface TabBarProps {
 
 function TabBar({ state, navigateToTab }: TabBarProps) {
   const insets = useSafeAreaInsets();
+  const reportNavbarHeight = useNavbarHeightReporter();
   return (
     <View style={[styles.barWrap, { bottom: insets.bottom + 12 }]}>
-      <View style={styles.bar}>
+      <View
+        style={styles.bar}
+        onLayout={(e) => reportNavbarHeight(e.nativeEvent.layout.height)}
+      >
         {state.routes.map((route, index) => {
           const isActive = state.index === index;
           const label = TAB_LABELS[route.name] ?? route.name;

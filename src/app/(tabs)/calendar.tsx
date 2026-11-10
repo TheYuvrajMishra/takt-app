@@ -11,7 +11,7 @@
 // block at the drop position, dropping outside the grid (or tapping the
 // "+" customize action) falls back to the earliest free slot.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Switch, useWindowDimensions, View, type ScrollViewInstance } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Switch, useWindowDimensions, View, type ScrollViewInstance } from 'react-native';
 import { Text, TextInput } from '../../components/TText';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -25,12 +25,13 @@ import {
   type Scope,
 } from '../../types';
 import { categoryColorHex, colors, faintText, fonts, hairline, radii, spacing } from '../../theme/tokens';
-import { useAppReducedMotion } from '../../theme/motion';
 import { dateKey, defaultDoNotNudgeFor, earliestEmptySlot, minToTime, overlaps, snap5 } from '../../lib/core';
 import {
   addDays,
+  assignLanes,
   autoShiftBlocks,
   categoryById,
+  formatRange,
   newId,
   ROUTINE_TEMPLATES,
   startOfWeek,
@@ -38,6 +39,8 @@ import {
 } from '../../components/calendar/helpers';
 import { BlockCard } from '../../components/calendar/BlockCard';
 import { Dock } from '../../components/Dock';
+import { Sheet } from '../../components/Sheet';
+import { useBottomInset } from '../../components/layout';
 import { useStore } from '../../store/useStore';
 
 type ViewMode = 'day' | '3day' | 'week';
@@ -76,7 +79,7 @@ interface PendingChange {
 const GUTTER = 48;
 const HOURS = 24;
 const MIN_HOUR_H = 48;
-const MAX_HOUR_H = 120;
+const MAX_HOUR_H = 240;
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const SCOPE_LABELS: Record<Scope, string> = {
@@ -95,8 +98,8 @@ function nowMinutes(): number {
 }
 
 export default function CalendarScreen() {
-  const reducedMotion = useAppReducedMotion();
   const insets = useSafeAreaInsets();
+  const bottomInset = useBottomInset();
   const { width } = useWindowDimensions();
   const scrollRef = useRef<ScrollViewInstance | null>(null);
   const gridRef = useRef<React.ComponentRef<typeof View> | null>(null);
@@ -115,6 +118,8 @@ export default function CalendarScreen() {
   const resizeBlock = useStore((s) => s.resizeBlock);
   const patchBlock = useStore((s) => s.patchBlock);
   const deleteBlock = useStore((s) => s.deleteBlock);
+  const markDone = useStore((s) => s.markDone);
+  const updateSettings = useStore((s) => s.updateSettings);
   const undoStore = useStore((s) => s.undo);
   const redoStore = useStore((s) => s.redo);
   const beginUndoBatch = useStore((s) => s.beginUndoBatch);
@@ -125,7 +130,9 @@ export default function CalendarScreen() {
 
   const [anchor, setAnchor] = useState<Date>(() => new Date());
   const [view, setView] = useState<ViewMode>('day');
-  const [hourHeight, setHourHeight] = useState(64);
+  // Timeline zoom persists in Settings (48..240dp hour height).
+  const savedHourHeight = useStore((s) => s.settings.calendarHourHeight ?? 64);
+  const [hourHeight, setHourHeight] = useState(savedHourHeight);
   const [nowMin, setNowMin] = useState(() => nowMinutes());
   const [scrollEnabled, setScrollEnabled] = useState(true);
 
@@ -138,6 +145,8 @@ export default function CalendarScreen() {
   const [magnetEdges, setMagnetEdges] = useState<number[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const [quick, setQuick] = useState<QuickSheet | null>(null);
+  // Detail peek: tap any block (even a tiny one) to see everything about it.
+  const [detail, setDetail] = useState<{ block: Block; date: string } | null>(null);
   const [qcTitle, setQcTitle] = useState('');
   const [qcDoNotNudge, setQcDoNotNudge] = useState(false);
   // Whether the user manually flipped the nudge switch in the open sheet.
@@ -162,15 +171,52 @@ export default function CalendarScreen() {
   const hourHeightRef = useRef(hourHeight);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const didScrollRef = useRef(false);
+  // Auto-scroll while dragging near the grid's top/bottom edge.
+  const scrollYRef = useRef(0);
+  const viewportHRef = useRef(0);
+  const lastAutoScrollRef = useRef(0);
   // Guards applyTemplate against a double-tap: without it, two overlapping
   // applies would nest into one undo batch and one Undo would revert both.
   const applyingTemplate = useRef(false);
-  const baseH = useSharedValue(64);
-  const lastPinchH = useSharedValue(64);
+  const baseH = useSharedValue(savedHourHeight);
+  const lastPinchH = useSharedValue(savedHourHeight);
 
   useEffect(() => {
     hourHeightRef.current = hourHeight;
   }, [hourHeight]);
+
+  // Follow the persisted zoom (e.g. after a restore); local pinch/button
+  // changes commit through commitZoom below.
+  useEffect(() => {
+    setHourHeight(savedHourHeight);
+  }, [savedHourHeight]);
+
+  const commitZoom = useCallback(
+    (v: number) => {
+      const next = clamp(Math.round(v / 2) * 2, MIN_HOUR_H, MAX_HOUR_H);
+      setHourHeight(next);
+      void updateSettings({ calendarHourHeight: next });
+    },
+    [updateSettings],
+  );
+
+  // Nudge the grid while a drag/resize ghost approaches its top/bottom edge.
+  const autoScrollFor = useCallback((topMin: number, bottomMin: number) => {
+    const now = Date.now();
+    if (now - lastAutoScrollRef.current < 120) return;
+    const topPx = (topMin / 60) * hourHeightRef.current;
+    const bottomPx = (bottomMin / 60) * hourHeightRef.current;
+    const y = scrollYRef.current;
+    const vh = viewportHRef.current;
+    if (vh <= 0) return;
+    if (topPx < y + 80) {
+      lastAutoScrollRef.current = now;
+      scrollRef.current?.scrollTo({ y: Math.max(0, y - 48), animated: true });
+    } else if (bottomPx > y + vh - 80) {
+      lastAutoScrollRef.current = now;
+      scrollRef.current?.scrollTo({ y: y + 48, animated: true });
+    }
+  }, []);
 
   // Hydrate the store once (the root layout also loads it).
   useEffect(() => {
@@ -379,8 +425,9 @@ export default function CalendarScreen() {
         if (!dragCtx || dragCtx.id !== id) return g;
         return { blockId: id, date: dragCtx.date, startMin, durationMin: dragCtx.durationMin };
       });
+      autoScrollFor(startMin, startMin + (dragCtx?.durationMin ?? 0));
     },
-    [dragCtx],
+    [dragCtx, autoScrollFor],
   );
 
   const handleDragEnd = useCallback(
@@ -433,8 +480,10 @@ export default function CalendarScreen() {
         if (!found) return g;
         return { blockId: id, date: found.date, startMin: found.block.startMin, durationMin };
       });
+      const found = findBlock(id);
+      if (found) autoScrollFor(found.block.startMin, found.block.startMin + durationMin);
     },
-    [resizeCtx, findBlock],
+    [resizeCtx, findBlock, autoScrollFor],
   );
 
   const handleResizeEnd = useCallback(
@@ -470,11 +519,117 @@ export default function CalendarScreen() {
     setScrollEnabled(true);
   }, []);
 
+  // ---- top resize (drag the top edge: start moves, duration follows) ---
+  const handleResizeTopStart = useCallback(
+    (id: string) => {
+      const found = findBlock(id);
+      if (!found) return;
+      setResizeCtx({ id, date: found.date });
+      setDragId(id);
+    },
+    [findBlock],
+  );
+
+  const handleResizeTopPreview = useCallback(
+    (id: string, startMin: number, durationMin: number) => {
+      setGhost((g) => {
+        if (!resizeCtx || resizeCtx.id !== id) return g;
+        const found = findBlock(id);
+        if (!found) return g;
+        return { blockId: id, date: found.date, startMin, durationMin };
+      });
+      autoScrollFor(startMin, startMin + durationMin);
+    },
+    [resizeCtx, findBlock, autoScrollFor],
+  );
+
+  const handleResizeTopEnd = useCallback(
+    (id: string, startMin: number, durationMin: number) => {
+      const ctx = resizeCtx;
+      setGhost(null);
+      setDragId(null);
+      setResizeCtx(null);
+      if (!ctx || ctx.id !== id) return;
+      const list = getBlocksForDate(ctx.date);
+      const orig = list.find((b) => b.id === id);
+      if (!orig || (startMin === orig.startMin && durationMin === orig.durationMin)) return;
+      const moved: Block = { ...orig, startMin: snap5(startMin), durationMin };
+      const shifted = autoShiftBlocks(list, moved);
+      if (!shifted) {
+        showToast('No room to grow here — neighbours are in the way');
+        return;
+      }
+      requestScope(`Resized "${moved.title}"`, (scope) =>
+        applyShift(ctx.date, list, shifted, id, scope),
+      );
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [resizeCtx, applyShift, requestScope, showToast, templates, dayOverrides],
+  );
+
   // ---- select / tap --------------------------------------------------
-  const handleLongPressBlock = useCallback((id: string) => {
-    void Haptics.selectionAsync();
-    setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
-  }, []);
+  const handleTapBlock = useCallback(
+    (id: string) => {
+      if (selecting) {
+        setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+        return;
+      }
+      // Tap opens the detail peek (never the editor directly): even a tiny
+      // block's full title, time, notes and actions are one tap away.
+      const found = findBlock(id);
+      if (found) setDetail({ block: found.block, date: found.date });
+    },
+    [selecting, findBlock],
+  );
+
+  // Detail-peek actions ------------------------------------------------
+  const duplicateDetailBlock = useCallback(() => {
+    if (!detail) return;
+    const { block, date } = detail;
+    setDetail(null);
+    requestScope(`Duplicated "${block.title}"`, async (scope) => {
+      const list = getBlocksForDate(date);
+      const copy: Block = {
+        ...block,
+        id: newId(),
+        title: `${block.title} (copy)`,
+        startMin: block.startMin + block.durationMin,
+      };
+      let merged = autoShiftBlocks(list, copy);
+      if (!merged) {
+        const slot = earliestEmptySlot(list, block.startMin + block.durationMin, copy.durationMin);
+        if (slot === null) {
+          showToast('No room to duplicate');
+          return;
+        }
+        merged = autoShiftBlocks(list, { ...copy, startMin: slot });
+      }
+      if (!merged) {
+        showToast('No room to duplicate');
+        return;
+      }
+      beginUndoBatch();
+      try {
+        await applyCreated(date, list, merged, copy.id, scope);
+      } finally {
+        endUndoBatch();
+      }
+    });
+  }, [detail, requestScope, applyCreated, showToast, beginUndoBatch, endUndoBatch]);
+
+  const deleteDetailBlock = useCallback(() => {
+    if (!detail) return;
+    const { block, date } = detail;
+    setDetail(null);
+    requestScope(`Deleted "${block.title}"`, (scope) => deleteBlock(block.id, date, scope));
+  }, [detail, requestScope, deleteBlock]);
+
+  const markDetailDone = useCallback(() => {
+    if (!detail) return;
+    const { block, date } = detail;
+    setDetail(null);
+    void markDone(block.id, date);
+  }, [detail, markDone]);
 
   const openCreate = useCallback((date: string, startMin: number) => {
     setQcTitle('');
@@ -515,18 +670,6 @@ export default function CalendarScreen() {
       }
     },
     [quick, qcNudgeDirty],
-  );
-
-  const handleTapBlock = useCallback(
-    (id: string) => {
-      if (selecting) {
-        setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
-        return;
-      }
-      const found = findBlock(id);
-      if (found) openEdit(found.block, found.date);
-    },
-    [selecting, findBlock, openEdit],
   );
 
   const handleBackgroundLongPress = useCallback(
@@ -907,6 +1050,10 @@ export default function CalendarScreen() {
         lastPinchH.value = v;
         runOnJS(setHourHeight)(v);
       }
+    })
+    .onEnd(() => {
+      // Persist the zoom so tiny blocks stay readable next time.
+      runOnJS(commitZoom)(lastPinchH.value);
     });
 
   const twoFinger = Gesture.Pan()
@@ -948,21 +1095,23 @@ export default function CalendarScreen() {
     visibleDates.map((date, colIdx) => {
       const key = dateKey(date);
       const list = getBlocksForDate(key);
-      return list.map((block) => {
+      // Overlapping blocks share the column in side-by-side lanes, so a
+      // tiny block never hides under a neighbour.
+      return assignLanes(list).map(({ block, lane, laneCount }) => {
         const top = (block.startMin / 60) * hourHeight;
         const height = Math.max(28, (block.durationMin / 60) * hourHeight);
+        const laneW = (colW - 8) / laneCount;
         return (
           <BlockCard
             key={`${key}-${block.id}`}
             block={block}
             top={top}
-            left={GUTTER + colIdx * colW + 4}
-            width={colW - 8}
+            left={GUTTER + colIdx * colW + 4 + lane * laneW}
+            width={laneW - 2}
             height={height}
             hourHeight={hourHeight}
             magnetEdges={magnetEdges}
             selected={selected.includes(block.id)}
-            dragging={dragId === block.id}
             onInteractionStart={() => setScrollEnabled(false)}
             onInteractionEnd={() => setScrollEnabled(true)}
             onDragStart={handleDragStart}
@@ -971,7 +1120,9 @@ export default function CalendarScreen() {
             onResizeStart={handleResizeStart}
             onResizePreview={handleResizePreview}
             onResizeEnd={handleResizeEnd}
-            onLongPressBlock={handleLongPressBlock}
+            onResizeTopStart={handleResizeTopStart}
+            onResizeTopPreview={handleResizeTopPreview}
+            onResizeTopEnd={handleResizeTopEnd}
             onTapBlock={handleTapBlock}
             onDragCancel={handleDragCancel}
           />
@@ -1075,6 +1226,13 @@ export default function CalendarScreen() {
           <Pressable onPress={() => step(1)} style={styles.navBtn} accessibilityLabel="Next">
             <Text style={styles.navBtnText}>›</Text>
           </Pressable>
+          <Pressable onPress={() => commitZoom(hourHeight - 16)} style={styles.navBtn} accessibilityLabel="Zoom out">
+            <Text style={styles.navBtnText}>−</Text>
+          </Pressable>
+          <Text style={styles.zoomLabel}>{Math.round((hourHeight / 64) * 100)}%</Text>
+          <Pressable onPress={() => commitZoom(hourHeight + 16)} style={styles.navBtn} accessibilityLabel="Zoom in">
+            <Text style={styles.navBtnText}>+</Text>
+          </Pressable>
           <Pressable onPress={() => setTemplateSheet(true)} style={styles.applyBtn}>
             <Text style={styles.applyBtnText}>Apply to…</Text>
           </Pressable>
@@ -1107,9 +1265,16 @@ export default function CalendarScreen() {
           <ScrollView
             ref={scrollRef}
             style={styles.gridScroll}
-            contentContainerStyle={styles.gridContent}
+            contentContainerStyle={{ paddingBottom: bottomInset }}
             scrollEnabled={scrollEnabled}
             showsVerticalScrollIndicator={false}
+            scrollEventThrottle={16}
+            onScroll={(e) => {
+              scrollYRef.current = e.nativeEvent.contentOffset.y;
+            }}
+            onLayout={(e) => {
+              viewportHRef.current = e.nativeEvent.layout.height;
+            }}
           >
             <GestureDetector gesture={backgroundLongPress}>
               <View ref={gridRef} style={{ width: width, height: contentHeight }}>
@@ -1131,7 +1296,7 @@ export default function CalendarScreen() {
 
         {/* Multi-select bar */}
         {selecting && (
-          <View style={[styles.selectBar, styles.selectBarAboveDock]}>
+          <View style={[styles.selectBar, { marginBottom: bottomInset }]}>
             <Text style={styles.selectCount}>{selected.length} selected</Text>
             <Pressable onPress={duplicateSelected} style={styles.selectAction}>
               <Text style={styles.selectActionText}>Duplicate</Text>
@@ -1153,23 +1318,68 @@ export default function CalendarScreen() {
           categories={cats}
           onDrop={handleDockDrop}
           onCustomize={() => showToast('Dock customization coming soon.')}
-          style={{ bottom: 0 }}
         />
 
         {toast && (
-          <View style={[styles.toast, { bottom: 120 }]}>
+          <View style={[styles.toast, { bottom: bottomInset + 8 }]}>
             <Text style={styles.toastText}>{toast}</Text>
           </View>
         )}
 
-        {/* Quick create / edit sheet */}
-        <Modal visible={quick !== null} transparent animationType={reducedMotion ? 'none' : 'slide'} onRequestClose={() => setQuick(null)}>
-          <Pressable style={styles.sheetBackdrop} onPress={() => setQuick(null)}>
-            <Pressable style={styles.sheet} onPress={() => undefined}>
-              <View style={styles.sheetHandle} />
-              <Text style={styles.sheetTitle}>
-                {quick?.mode === 'edit' ? 'Edit block' : `New block · ${quick ? minToTime(quick.startMin) : ''}`}
+        {/* Detail peek — tap any block (even a tiny one) to see everything about it */}
+        <Sheet
+          visible={detail !== null}
+          onClose={() => setDetail(null)}
+          title={detail?.block.title}
+        >
+          {detail ? (
+            <View style={styles.sheetBody}>
+              <Text style={styles.sheetSub}>
+                {formatRange(detail.block)} · {detail.block.durationMin} min ·{' '}
+                {categoryById(detail.block.categoryId, categories).name}
               </Text>
+              {detail.block.notes ? (
+                <Text style={styles.sheetSub}>{detail.block.notes}</Text>
+              ) : null}
+              <Pressable
+                onPress={() => {
+                  const d = detail;
+                  setDetail(null);
+                  if (d) openEdit(d.block, d.date);
+                }}
+                style={styles.saveBtn}
+              >
+                <Text style={styles.saveBtnText}>Edit block</Text>
+              </Pressable>
+              <Pressable onPress={duplicateDetailBlock} style={styles.scopeRow}>
+                <Text style={styles.scopeRowText}>Duplicate</Text>
+              </Pressable>
+              <Pressable onPress={markDetailDone} style={styles.scopeRow}>
+                <Text style={styles.scopeRowText}>Mark done</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  setSelected([detail.block.id]);
+                  setDetail(null);
+                }}
+                style={styles.scopeRow}
+              >
+                <Text style={styles.scopeRowText}>Select (multi-select)</Text>
+              </Pressable>
+              <Pressable onPress={deleteDetailBlock} style={styles.deleteBtn}>
+                <Text style={styles.deleteBtnText}>Delete block</Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </Sheet>
+
+        {/* Quick create / edit sheet */}
+        <Sheet
+          visible={quick !== null}
+          onClose={() => setQuick(null)}
+          title={quick?.mode === 'edit' ? 'Edit block' : `New block · ${quick ? minToTime(quick.startMin) : ''}`}
+        >
+          <View style={styles.sheetBody}>
               <TextInput
                 value={qcTitle}
                 onChangeText={setQcTitle}
@@ -1233,17 +1443,13 @@ export default function CalendarScreen() {
                   <Text style={styles.deleteBtnText}>Delete block</Text>
                 </Pressable>
               )}
-            </Pressable>
-          </Pressable>
-        </Modal>
+          </View>
+        </Sheet>
 
         {/* Scope sheet — shown on every change; the change only runs
             once a scope is picked, dismissing cancels it. */}
-        <Modal visible={pending !== null} transparent animationType={reducedMotion ? 'none' : 'slide'} onRequestClose={cancelPending}>
-          <Pressable style={styles.sheetBackdrop} onPress={cancelPending}>
-            <Pressable style={styles.sheet} onPress={() => undefined}>
-              <View style={styles.sheetHandle} />
-              <Text style={styles.sheetTitle}>Apply this change to…</Text>
+        <Sheet visible={pending !== null} onClose={cancelPending} title="Apply this change to…">
+          <View style={styles.sheetBody}>
               {pending && <Text style={styles.sheetSub}>{pending.description}</Text>}
               <Text style={styles.sheetNote}>
                 Last scope: {SCOPE_LABELS[lastScope]}. Picking a scope applies the change to the routine template where it fits; a block that only exists today falls back to today only.
@@ -1269,16 +1475,12 @@ export default function CalendarScreen() {
                   <Text style={styles.scopeRowText}>{SCOPE_LABELS.weekday}</Text>
                 </Pressable>
               )}
-            </Pressable>
-          </Pressable>
-        </Modal>
+          </View>
+        </Sheet>
 
         {/* Swap sheet — when a drop cannot auto-shift */}
-        <Modal visible={swapSheet !== null} transparent animationType={reducedMotion ? 'none' : 'slide'} onRequestClose={() => setSwapSheet(null)}>
-          <Pressable style={styles.sheetBackdrop} onPress={() => setSwapSheet(null)}>
-            <Pressable style={styles.sheet} onPress={() => undefined}>
-              <View style={styles.sheetHandle} />
-              <Text style={styles.sheetTitle}>No room to shift</Text>
+        <Sheet visible={swapSheet !== null} onClose={() => setSwapSheet(null)} title="No room to shift">
+          <View style={styles.sheetBody}>
               {swapSheet && (
                 <Text style={styles.sheetSub}>
                   “{swapSheet.moved.title}” cannot fit at {minToTime(swapSheet.moved.startMin)} without pushing “
@@ -1297,16 +1499,12 @@ export default function CalendarScreen() {
               >
                 <Text style={styles.deleteBtnText}>Keep as it was</Text>
               </Pressable>
-            </Pressable>
-          </Pressable>
-        </Modal>
+          </View>
+        </Sheet>
 
         {/* Routine template picker */}
-        <Modal visible={templateSheet} transparent animationType={reducedMotion ? 'none' : 'slide'} onRequestClose={() => setTemplateSheet(false)}>
-          <Pressable style={styles.sheetBackdrop} onPress={() => setTemplateSheet(false)}>
-            <Pressable style={styles.sheet} onPress={() => undefined}>
-              <View style={styles.sheetHandle} />
-              <Text style={styles.sheetTitle}>Apply a routine</Text>
+        <Sheet visible={templateSheet} onClose={() => setTemplateSheet(false)} title="Apply a routine">
+          <View style={styles.sheetBody}>
               <View style={styles.segmented}>
                 {(['day', 'visible'] as const).map((t) => (
                   <Pressable
@@ -1331,9 +1529,8 @@ export default function CalendarScreen() {
                   </View>
                 </Pressable>
               ))}
-            </Pressable>
-          </Pressable>
-        </Modal>
+          </View>
+        </Sheet>
       </View>
     </GestureHandlerRootView>
   );
@@ -1429,7 +1626,6 @@ const styles = StyleSheet.create({
   stripDayText: { fontFamily: fonts.semibold, fontSize: 15, color: colors.carbon },
   stripDayTextActive: { color: colors.paper },
   gridScroll: { flex: 1 },
-  gridContent: { paddingBottom: 110 },
   hourRow: { flexDirection: 'row', alignItems: 'flex-start' },
   hourLabelWrap: { width: GUTTER, alignItems: 'center', paddingTop: 2 },
   hourLabel: { fontFamily: fonts.regular, fontSize: 11, color: faintText },
@@ -1486,7 +1682,6 @@ const styles = StyleSheet.create({
   selectCount: { fontFamily: fonts.medium, fontSize: 13, color: colors.paper, flex: 1 },
   selectAction: { paddingHorizontal: 8, paddingVertical: 4 },
   selectActionText: { fontFamily: fonts.medium, fontSize: 13, color: colors.paper },
-  selectBarAboveDock: { marginBottom: 84 },
   selectDelete: { backgroundColor: colors.orchid, borderRadius: radii.pill },
   toast: {
     position: 'absolute',
@@ -1497,25 +1692,8 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   toastText: { fontFamily: fonts.medium, fontSize: 13, color: colors.paper },
-  sheetBackdrop: { flex: 1, backgroundColor: 'rgba(10,10,10,0.35)', justifyContent: 'flex-end' },
-  sheet: {
-    backgroundColor: colors.paper,
-    borderTopLeftRadius: radii.sheet,
-    borderTopRightRadius: radii.sheet,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.xl,
-    gap: 10,
-  },
-  sheetHandle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: hairline,
-    alignSelf: 'center',
-    marginBottom: 4,
-  },
-  sheetTitle: { fontFamily: fonts.semibold, fontSize: 20, color: colors.carbon },
+  sheetBody: { gap: 10 },
+  zoomLabel: { fontFamily: fonts.medium, fontSize: 12, color: faintText, minWidth: 34, textAlign: 'center' },
   sheetSub: { fontFamily: fonts.regular, fontSize: 14, color: colors.carbon, lineHeight: 20 },
   sheetNote: { fontFamily: fonts.regular, fontSize: 12, color: faintText, lineHeight: 17 },
   sheetLabel: { fontFamily: fonts.medium, fontSize: 13, color: colors.carbon, marginTop: 4 },

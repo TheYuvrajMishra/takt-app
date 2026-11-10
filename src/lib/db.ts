@@ -195,6 +195,15 @@ export async function deleteCategory(id: string): Promise<void> {
   await db.runAsync('DELETE FROM categories WHERE id = ?', id);
 }
 
+/** Bump a category's usage count (drives the dock's most-used ordering). */
+export async function bumpCategoryUsage(id: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    'UPDATE categories SET usage_count = usage_count + 1 WHERE id = ?',
+    id,
+  );
+}
+
 export async function reorderCategories(idsInOrder: string[]): Promise<void> {
   const db = await getDb();
   await db.withTransactionAsync(async () => {

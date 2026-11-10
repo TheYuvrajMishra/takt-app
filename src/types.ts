@@ -81,6 +81,8 @@ export interface Settings {
   defaultDoNotNudge: boolean;
   /** Categories whose new blocks do not nudge by default. */
   doNotNudgeCategoryIds: string[];
+  /** Calendar timeline zoom: hour height in dp (48..240, default 64). Optional so saved settings from older builds still load. */
+  calendarHourHeight?: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -95,6 +97,7 @@ export const DEFAULT_SETTINGS: Settings = {
   largeText: false,
   defaultDoNotNudge: false,
   doNotNudgeCategoryIds: ['cat-sleep'],
+  calendarHourHeight: 64,
 };
 
 export const DEFAULT_DURATION_MIN = 25;

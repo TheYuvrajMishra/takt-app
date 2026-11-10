@@ -6,15 +6,17 @@ export interface CategoryIconProps {
   icon: string;
   color?: CategoryColorName;
   size?: number;
+  /** Stroke colour for the glyph (defaults to carbon). Pass the text colour when the icon sits on a filled card. */
+  glyphColor?: string;
 }
 
 /**
  * Custom category glyphs: 1.75px stroke, rounded caps, carbon stroke on a
  * color fill (DESIGN.md). Unknown keys fall back to a simple spark glyph.
  */
-export function CategoryIcon({ icon, color = 'carbon', size = 24 }: CategoryIconProps) {
+export function CategoryIcon({ icon, color = 'carbon', size = 24, glyphColor }: CategoryIconProps) {
   const fill = categoryColorHex[color];
-  const stroke = colors.carbon;
+  const stroke = glyphColor ?? colors.carbon;
   const sw = 1.75;
   const common = { stroke, strokeWidth: sw, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, fill: 'none' };
   return (

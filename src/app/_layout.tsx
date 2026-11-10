@@ -7,6 +7,7 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import * as Notifications from 'expo-notifications';
 import { useTaktFonts } from '../theme/fonts';
 import { GrainOverlay } from '../components/GrainOverlay';
+import { LayoutProvider } from '../components/layout';
 import { colors } from '../theme/tokens';
 import { useStore } from '../store/useStore';
 import { initNudges, registerNudgeResponseListener, rescheduleIfPermitted } from '../lib/nudge';
@@ -105,13 +106,15 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.cloud }}>
-      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.cloud } }}>
-        <Stack.Screen name="index" />
-        <Stack.Screen name="(tabs)" />
-        <Stack.Screen name="onboarding" />
-        <Stack.Screen name="settings" />
-      </Stack>
-      <GrainOverlay />
+      <LayoutProvider>
+        <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.cloud } }}>
+          <Stack.Screen name="index" />
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="onboarding" />
+          <Stack.Screen name="settings" />
+        </Stack>
+        <GrainOverlay />
+      </LayoutProvider>
     </GestureHandlerRootView>
   );
 }

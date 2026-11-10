@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest';
 import SRC from '../../components/calendar/BlockCard.tsx?raw';
 
 function workletRegion(): string {
-  const start = SRC.indexOf('const pan = Gesture.Pan()');
+  const start = SRC.indexOf('const hold = Gesture.LongPress()');
   const end = SRC.indexOf('const category = categoryById');
   expect(start).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(start);
@@ -40,7 +40,9 @@ describe('BlockCard worklet safety', () => {
       'onResizeStart',
       'onResizePreview',
       'onResizeEnd',
-      'onLongPressBlock',
+      'onResizeTopStart',
+      'onResizeTopPreview',
+      'onResizeTopEnd',
       'onTapBlock',
       'onDragCancel',
     ]) {
@@ -49,9 +51,18 @@ describe('BlockCard worklet safety', () => {
     expect(SRC).toContain('} = props;');
   });
 
-  it('mirrors dragging into a shared value instead of reading props in useAnimatedStyle', () => {
-    expect(SRC).toContain('draggingSV');
-    expect(SRC).toContain('draggingSV.value = dragging');
-    expect(workletRegion()).toContain('draggingSV.value');
+  it('drives the lift from a shared value, never from the dragging prop in a worklet', () => {
+    // The old code dimmed via `opacity: props.dragging` inside
+    // useAnimatedStyle (the crash). The lift now comes from the `lift`
+    // shared value, set by the hold gesture on the UI thread.
+    expect(SRC).toContain('lift.value');
+    expect(workletRegion()).not.toMatch(/props\.dragging/);
+    expect(workletRegion()).not.toContain('draggingSV');
+  });
+
+  it('arms drags only after the HOLD_MS hold, and the Pan is manual-activation', () => {
+    expect(SRC).toContain('HOLD_MS');
+    expect(SRC).toContain('.minDuration(HOLD_MS)');
+    expect(SRC).toContain('.manualActivation(true)');
   });
 });
