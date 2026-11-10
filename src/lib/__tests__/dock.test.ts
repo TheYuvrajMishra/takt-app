@@ -1,16 +1,15 @@
-// Dock guards (reported on device 2026-11-10): the collapsed row showed
-// 5–6 chips and the hold ring sat off the icon. These test the real pure
-// helpers in components/dockHelpers.ts.
+// Dock guards: the hold ring must sit exactly on the icon, and the drawer
+// height must be driven by shared values (never refs — a worklet captures
+// its closure at install time, so a ref reads its initial value forever
+// and the drawer stayed clipped to one row, 2026-11-10).
 import { describe, expect, it } from 'vitest';
 import {
-  collapsedCountForWidth,
   orderDockCategories,
   RING_CENTER_X,
   RING_CENTER_Y,
   RING_GEOMETRY,
   RING_ICON_CENTER_X,
   RING_ICON_CENTER_Y,
-  topDockCategories,
 } from '../../components/dockHelpers';
 import type { Category } from '../../types';
 
@@ -27,15 +26,14 @@ function cat(id: string, usageCount: number): Category {
   } as Category;
 }
 
-describe('dock collapsed row', () => {
-  it('shows 3–4 chips, never 5–6', () => {
-    expect(collapsedCountForWidth(360)).toBe(3);
-    expect(collapsedCountForWidth(399)).toBe(3);
-    expect(collapsedCountForWidth(400)).toBe(4);
-    expect(collapsedCountForWidth(800)).toBe(4);
+describe('dock drawer ordering', () => {
+  it('orders most-used at both ends', () => {
+    const ordered = orderDockCategories([cat('a', 10), cat('b', 1), cat('c', 5)]);
+    expect(ordered[0]?.id).toBe('a');
+    expect(ordered[ordered.length - 1]?.id).toBe('c');
   });
 
-  it('caps the collapsed row at that count, most-used first', () => {
+  it('shows every category (no collapsed strip to cap)', () => {
     const cats = [
       cat('a', 10),
       cat('b', 1),
@@ -44,15 +42,7 @@ describe('dock collapsed row', () => {
       cat('e', 3),
       cat('f', 0),
     ];
-    const top = topDockCategories(cats, collapsedCountForWidth(360));
-    expect(top).toHaveLength(3);
-    expect(top.map((c) => c.id).sort()).toEqual(['a', 'c', 'd']);
-  });
-
-  it('orders most-used at both ends', () => {
-    const ordered = orderDockCategories([cat('a', 10), cat('b', 1), cat('c', 5)]);
-    expect(ordered[0]?.id).toBe('a');
-    expect(ordered[ordered.length - 1]?.id).toBe('c');
+    expect(orderDockCategories(cats)).toHaveLength(6);
   });
 });
 

@@ -20,11 +20,12 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import type { Block } from '../../types';
-import { categoryColorHex, colors, fonts } from '../../theme/tokens';
+import { categoryColorHex, colors, fonts, shadows } from '../../theme/tokens';
 import { DECEL, HOLD_CANCEL_PX, HOLD_MS, useAppReducedMotion } from '../../theme/motion';
 import { minToTime, snap5 } from '../../lib/core';
 import { categoryById, formatRange, textColorFor, variantForHeight } from './helpers';
 import { CategoryIcon } from '../CategoryIcon';
+import { PaperTexture } from '../PaperTexture';
 import { useStore } from '../../store/useStore';
 
 export interface BlockCardProps {
@@ -246,8 +247,10 @@ export function BlockCard(props: BlockCardProps) {
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: ty.value }, { scale: 1 + 0.03 * lift.value }],
-    elevation: 8 * lift.value,
-    shadowOpacity: 0.25 * lift.value,
+    // Resting shadow (soft) that deepens while lifted — the card reads as
+    // paper sitting on the page, not a flat fill.
+    elevation: 2 + 6 * lift.value,
+    shadowOpacity: 0.09 + 0.16 * lift.value,
   }));
 
   const category = categoryById(block.categoryId, categories);
@@ -316,11 +319,10 @@ export function BlockCard(props: BlockCardProps) {
             ) : null}
           </>
         )}
-        {/* Visible resize handles, top + bottom (hit area is the card's
-            edge zones; the card itself is the touch target, so even a
-            28dp tiny block offers both handles). */}
-        <View style={[styles.resizeGripTop, { backgroundColor: fg }]} />
-        <View style={[styles.resizeGripBottom, { backgroundColor: fg }]} />
+        {/* No visible resize grips: the top/bottom edge zones resize
+            (see the Pan above), but the lines cluttered tiny blocks. */}
+        {/* Subtle paper grain over the fill (clipped by overflow hidden). */}
+        <PaperTexture radius={12} opacity={0.04} />
       </Animated.View>
     </GestureDetector>
   );
@@ -333,10 +335,12 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     paddingHorizontal: 8,
     overflow: 'hidden',
-    shadowColor: colors.carbon,
-    shadowOffset: { width: 0, height: 6 },
-    shadowRadius: 12,
-    shadowOpacity: 0,
+    // Resting shadow (soft token); the animated style above deepens the
+    // opacity/elevation while lifted.
+    shadowColor: shadows.soft.shadowColor,
+    shadowOffset: shadows.soft.shadowOffset,
+    shadowRadius: shadows.soft.shadowRadius,
+    shadowOpacity: shadows.soft.shadowOpacity,
   },
   tiny: { paddingTop: 5, paddingBottom: 5 },
   small: { paddingTop: 6, paddingBottom: 6 },
@@ -373,23 +377,5 @@ const styles = StyleSheet.create({
     lineHeight: 14,
     opacity: 0.75,
     marginTop: 2,
-  },
-  resizeGripTop: {
-    position: 'absolute',
-    top: 2,
-    alignSelf: 'center',
-    width: 28,
-    height: 3,
-    borderRadius: 2,
-    opacity: 0.55,
-  },
-  resizeGripBottom: {
-    position: 'absolute',
-    bottom: 2,
-    alignSelf: 'center',
-    width: 28,
-    height: 3,
-    borderRadius: 2,
-    opacity: 0.55,
   },
 });

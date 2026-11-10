@@ -103,6 +103,9 @@ describe('layout contract', () => {
   it('the dock positions itself from the layout context, never hard-coded', () => {
     expect(DOCK_SRC).toContain('useDockBottom');
     expect(DOCK_SRC).toContain('useDockHeightReporter');
-    expect(DOCK_SRC).toContain('bottom: dockBottom');
+    // The drawer sits DRAWER_TO_NAV_GAP above the navbar: its bottom is
+    // derived from the context's dockBottom, never a hard-coded number.
+    // (The root's `bottom: 0` is the full-screen overlay, not the drawer.)
+    expect(DOCK_SRC).toContain('dockBottom - LAYOUT_GAP + DRAWER_TO_NAV_GAP');
   });
 });

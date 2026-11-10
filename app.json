@@ -31,7 +31,8 @@
         "expo-notifications",
         {
           "color": "#0A0A0A",
-          "icon": "./assets/icon.png"
+          "icon": "./assets/icon.png",
+          "sounds": ["./assets/sounds/alarm.wav"]
         }
       ],
       "expo-sqlite",

@@ -1,11 +1,10 @@
-// Takt — Dock. Swipe-up expandable dock of category chips.
+// Takt — Dock. A drawer of ALL category chips, hidden until called for.
 //
-// Collapsed: a fixed, non-scrolling row of the 3–4 most-used chips
-// (reordered by usage, most important at both ends) with a drag handle
-// above it. The collapsed container is transparent — no solid band over
-// the content below. Swipe up on the handle (or tap it) expands into a
-// drawer panel with ALL chips; swipe down on the handle or tap outside
-// collapses.
+// There is no visible strip: the dock vanishes completely and only comes
+// up as a drawer — swipe up anywhere on the navbar (or tap the small
+// up-arrow above it) opens it; swipe down on the drawer or tap outside
+// closes it. The drawer is transparent (no solid panel over the content),
+// its pills float on paper chips, and it sits 8dp above the navbar.
 //
 // Selection is press-and-hold ONLY (HOLD_MS = 300): a tap or a swipe
 // never selects or creates anything. While holding, the chip scales to
@@ -13,11 +12,18 @@
 // haptic fires at the moment of activation. Moving more than
 // HOLD_CANCEL_PX before the hold completes cancels it (treated as a
 // scroll). The hold closes the drawer first, then: a category with
-// subcategories opens the radial menu (Today), anything else starts a
-// drag onto the timeline (Calendar) or the sections (Today).
+// subcategories opens the radial menu (Today / Calendar), anything else
+// starts a drag onto the timeline (Calendar) or the sections (Today).
+//
+// The radial is driven by THIS dock's Pan, not by a gesture inside the
+// radial: the radial mounts mid-touch, after the hold, and a gesture that
+// mounts mid-touch can never see the finger already down (that is why the
+// old flow needed a lift + tap). While a radial is open, the node's Pan
+// forwards the finger (onRadialMove) and the release (onRadialRelease);
+// the parent (useRadialDrag) owns the hover / dwell / attach machine.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ViewStyle } from 'react-native';
-import { Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { Text } from './TText';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
@@ -30,19 +36,12 @@ import Animated, {
 import * as Haptics from 'expo-haptics';
 import Svg, { Circle } from 'react-native-svg';
 import type { SharedValue } from 'react-native-reanimated';
-import { colors, fonts, hairline, radii } from '../theme/tokens';
+import { colors, fonts, hairline, radii, shadows } from '../theme/tokens';
 import { DECEL, HOLD_CANCEL_PX, HOLD_MS, useAppReducedMotion } from '../theme/motion';
 import { CategoryIcon } from './CategoryIcon';
 import type { Category } from '../types';
-import {
-  collapsedCountForWidth,
-  orderDockCategories,
-  RING_CENTER_X,
-  RING_GEOMETRY,
-  RING_ICON_CENTER_X,
-  topDockCategories,
-} from './dockHelpers';
-import { useDockBottom, useDockExpandedState, useDockHeightReporter } from './layout';
+import { orderDockCategories, RING_GEOMETRY } from './dockHelpers';
+import { useDockBottom, useDockExpandedState, useDockHeightReporter, LAYOUT_GAP } from './layout';
 
 export interface DockAnchor {
   x: number;
@@ -51,7 +50,7 @@ export interface DockAnchor {
 
 export interface DockProps {
   categories: Category[];
-  /** Hold (no drag) on a node: open the radial menu at the anchor (Today only). */
+  /** Hold (no drag) on a node: open the radial menu at the anchor. */
   onLongPress?: (category: Category, anchor: DockAnchor) => void;
   /** Drag released: category + screen coordinates of the drop. */
   onDrop?: (category: Category, x: number, y: number) => void;
@@ -59,8 +58,12 @@ export interface DockProps {
   onDragMove?: (x: number, y: number) => void;
   /** A drag that was armed but ended without a drop (interrupted gesture). */
   onDragAbort?: () => void;
-  /** "+" customize button. */
-  onCustomize?: () => void;
+  /** Finger position while a radial is open (drives subcategory hover/dwell). */
+  onRadialMove?: (x: number, y: number) => void;
+  /** Finger lifted while a radial was open: create the hovered subcategory, or drop an armed drag. */
+  onRadialRelease?: (x: number, y: number) => void;
+  /** Touch interrupted while a radial was open: dismiss, never create. */
+  onRadialAbort?: () => void;
   /** Positioning of the dock root (the root is absolute-fill, pointerEvents box-none). */
   style?: ViewStyle;
 }
@@ -71,42 +74,43 @@ function lightHaptic(): void {
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
-export function Dock({ categories, onLongPress, onDrop, onDragMove, onDragAbort, onCustomize, style }: DockProps) {
-  const { width } = useWindowDimensions();
+/** Gap between the drawer and the navbar (the layout gap is 16; the drawer sits a little closer). */
+const DRAWER_TO_NAV_GAP = 8;
+
+export function Dock({
+  categories,
+  onLongPress,
+  onDrop,
+  onDragMove,
+  onDragAbort,
+  onRadialMove,
+  onRadialRelease,
+  onRadialAbort,
+  style,
+}: DockProps) {
   const dockBottom = useDockBottom();
   const reportDockHeight = useDockHeightReporter();
   const [expanded, setDockExpanded] = useDockExpandedState();
   const reducedMotion = useAppReducedMotion();
 
-  // Collapsed row: 3–4 most-used chips. Everything else lives in the
-  // swipe-up drawer.
-  const maxCollapsed = collapsedCountForWidth(width);
-  const collapsedCats = useMemo(
-    () => topDockCategories(categories, maxCollapsed),
-    [categories, maxCollapsed],
-  );
   const orderedAll = useMemo(() => orderDockCategories(categories), [categories]);
 
   const dragX = useSharedValue(0);
   const dragY = useSharedValue(0);
   const dragIndex = useSharedValue(-1);
   const [dragged, setDragged] = useState<Category | null>(null);
-  // 0 = collapsed, 1 = expanded (animated; drives height + cross-fade).
+  // 0 = hidden, 1 = drawer open (animated; drives height + cross-fade).
   const expandProgress = useSharedValue(0);
-  const [rowH, setRowH] = useState(0);
   const [gridH, setGridH] = useState(0);
-  const rowHRef = useRef(0);
   const gridHRef = useRef(0);
-  // Measured heights mirrored into shared values for the container-height
-  // worklet below. The refs MUST NOT be read there: a worklet captures its
-  // closure when it is first installed, so `rowHRef.current` reads 0
-  // forever (the drawer stayed at row height and the grid was clipped to
-  // its first row — reported on device 2026-11-10). Shared values are the
-  // only live channel into a worklet. The refs stay for the JS-side
-  // reportDockHeight effect only.
-  const rowHSV = useSharedValue(0);
+  // Measured grid height, mirrored into a shared value for the
+  // container-height worklet. Never read a ref inside a worklet: a worklet
+  // captures its closure when first installed, so a ref reads its initial
+  // value forever (the drawer stayed clipped to one row — 2026-11-10).
   const gridHSV = useSharedValue(0);
-  const handleHSV = useSharedValue(0);
+  // Index of the node whose radial is open (-1 = none). Set when a hold
+  // opens a radial; the node's Pan forwards the finger while it is set.
+  const radialNodeIndex = useSharedValue(-1);
 
   const beginDrag = (category: Category, index: number, x: number, y: number) => {
     setDragged(category);
@@ -125,25 +129,22 @@ export function Dock({ categories, onLongPress, onDrop, onDragMove, onDragAbort,
   };
 
   // Report the dock's rendered height so the layout contract can keep
-  // content above it (collapsed row vs expanded grid).
+  // content above it (0 while hidden — the strip is gone).
   useEffect(() => {
-    reportDockHeight(expanded ? gridHRef.current : rowHRef.current);
-  }, [expanded, rowH, gridH, reportDockHeight]);
+    reportDockHeight(expanded ? gridHRef.current : 0);
+  }, [expanded, gridH, reportDockHeight]);
   useEffect(() => () => reportDockHeight(0), [reportDockHeight]);
 
   const animateExpand = useCallback(
     (toExpanded: boolean) => {
-      // The effect below drives expandProgress from the context state, so
-      // any caller (this dock's handle, or a parent collapsing the drawer
-      // when a drag starts) animates the same way.
       setDockExpanded(toExpanded);
     },
     [setDockExpanded],
   );
 
-  // Single source of truth: expandProgress follows the context state.
-  // (Before this, only animateExpand moved the progress — a parent that
-  // collapsed the drawer via the context left the drawer visually open.)
+  // Single source of truth: expandProgress follows the context state, so
+  // any caller (the navbar's swipe-up, the drawer's swipe-down, a parent
+  // collapsing the drawer when a drag starts) animates the same way.
   useEffect(() => {
     if (reducedMotion) {
       expandProgress.value = expanded ? 1 : 0;
@@ -155,40 +156,27 @@ export function Dock({ categories, onLongPress, onDrop, onDragMove, onDragAbort,
     });
   }, [expanded, reducedMotion, expandProgress]);
 
-  // Swipe up on the handle expands, swipe down collapses; tap toggles.
-  const handlePan = Gesture.Pan()
-    .activeOffsetY([-8, 8])
+  // Swipe down on the drawer closes it. It runs simultaneous with the
+  // node Pans (a swipe starting on a pill would otherwise be stolen by
+  // the node's Pan) but only collapses when no drag or radial is active.
+  const closePan = Gesture.Pan()
+    .activeOffsetY(16)
     .onEnd((e) => {
-      if (!expanded && (e.translationY < -24 || e.velocityY < -400)) {
-        runOnJS(animateExpand)(true);
-      } else if (expanded && (e.translationY > 24 || e.velocityY > 400)) {
+      if (expandProgress.value < 0.5) return;
+      if (dragIndex.value !== -1 || radialNodeIndex.value !== -1) return;
+      if (e.translationY > 24 || e.velocityY > 400) {
         runOnJS(animateExpand)(false);
       }
     });
-  const handleTap = Gesture.Tap().onEnd(() => {
-    runOnJS(animateExpand)(!expanded);
-  });
-  const handleGesture = Gesture.Exclusive(handlePan, handleTap);
 
   const containerStyle = useAnimatedStyle(() => {
-    // Reads shared values only — never the refs (see the note above).
-    // The handle sits above the body inside this container, so its height
-    // belongs in the total or the last row is clipped by ~17dp.
-    const h =
-      handleHSV.value + rowHSV.value + (gridHSV.value - rowHSV.value) * expandProgress.value;
-    return { height: h > 0 ? h : undefined };
+    // Shared value only — never a ref (see the note above).
+    const h = gridHSV.value * expandProgress.value;
+    return { height: Math.max(0, h) };
   });
-  const rowStyle = useAnimatedStyle(() => ({
-    opacity: 1 - expandProgress.value,
-    transform: [{ translateY: -8 * expandProgress.value }],
-  }));
   const gridStyle = useAnimatedStyle(() => ({
     opacity: expandProgress.value,
     transform: [{ translateY: 16 * (1 - expandProgress.value) }],
-  }));
-
-  const panelStyle = useAnimatedStyle(() => ({
-    opacity: expandProgress.value,
   }));
 
   const ghostStyle = useAnimatedStyle(() => ({
@@ -199,13 +187,6 @@ export function Dock({ categories, onLongPress, onDrop, onDragMove, onDragAbort,
     ],
   }));
 
-  const onRowLayout = (h: number) => {
-    if (h > 0 && h !== rowHRef.current) {
-      rowHRef.current = h;
-      rowHSV.value = h;
-      setRowH(h);
-    }
-  };
   const onGridLayout = (h: number) => {
     if (h > 0 && h !== gridHRef.current) {
       gridHRef.current = h;
@@ -213,13 +194,10 @@ export function Dock({ categories, onLongPress, onDrop, onDragMove, onDragAbort,
       setGridH(h);
     }
   };
-  const onHandleLayout = (h: number) => {
-    if (h > 0) handleHSV.value = h;
-  };
 
   return (
     <View style={[styles.root, style]} pointerEvents="box-none">
-      {/* Tap outside the expanded grid collapses it. */}
+      {/* Tap outside the drawer collapses it. */}
       {expanded ? (
         <Pressable
           style={styles.backdrop}
@@ -228,32 +206,19 @@ export function Dock({ categories, onLongPress, onDrop, onDragMove, onDragAbort,
         />
       ) : null}
 
-      <View style={[styles.dock, { bottom: dockBottom }]} pointerEvents="box-none">
-        <Animated.View style={[styles.container, containerStyle]} pointerEvents="box-none">
-          {/* Drawer panel: only visible when expanded. Collapsed, the
-              container is transparent — the solid band used to cover the
-              content underneath it. */}
-          <Animated.View style={[styles.drawerPanel, panelStyle]} pointerEvents="none" />
-
-          <GestureDetector gesture={handleGesture}>
-            <View
-              style={styles.handleWrap}
-              onLayout={(e) => onHandleLayout(e.nativeEvent.layout.height)}
-              accessible
-              accessibilityRole="button"
-              accessibilityLabel={expanded ? 'Collapse dock' : 'Expand dock'}
-            >
-              <View style={styles.handle} />
-            </View>
-          </GestureDetector>
-
-          <View style={styles.body} pointerEvents="box-none">
+      {/* The drawer sits DRAWER_TO_NAV_GAP above the navbar (dockBottom is
+          navbar + LAYOUT_GAP, so subtract the difference). */}
+      <View style={[styles.dock, { bottom: Math.max(0, dockBottom - LAYOUT_GAP + DRAWER_TO_NAV_GAP) }]} pointerEvents="box-none">
+        <GestureDetector gesture={closePan}>
+          <Animated.View
+            style={[styles.container, containerStyle]}
+            pointerEvents={expanded ? 'auto' : 'none'}
+          >
             <Animated.View
-              style={[styles.row, rowStyle]}
-              onLayout={(e) => onRowLayout(e.nativeEvent.layout.height)}
-              pointerEvents={expanded ? 'none' : 'auto'}
+              style={[styles.grid, gridStyle]}
+              onLayout={(e) => onGridLayout(e.nativeEvent.layout.height)}
             >
-              {collapsedCats.map((category, index) => (
+              {orderedAll.map((category, index) => (
                 <DockNode
                   key={category.id}
                   category={category}
@@ -261,66 +226,23 @@ export function Dock({ categories, onLongPress, onDrop, onDragMove, onDragAbort,
                   dragX={dragX}
                   dragY={dragY}
                   dragIndex={dragIndex}
+                  radialNodeIndex={radialNodeIndex}
+                  closePan={closePan}
                   onDragBegin={beginDrag}
                   onDragEnd={endDrag}
                   onDragCancel={cancelDrag}
                   onDragMove={onDragMove}
                   onDragAbort={onDragAbort}
+                  onRadialMove={onRadialMove}
+                  onRadialRelease={onRadialRelease}
+                  onRadialAbort={onRadialAbort}
                   onLongPress={onLongPress}
                   collapseDrawer={() => animateExpand(false)}
                 />
               ))}
-              {onCustomize ? (
-                <View style={[styles.node, styles.customize]}>
-                  <Text
-                    style={styles.customizeLabel}
-                    onPress={onCustomize}
-                    accessibilityRole="button"
-                    accessibilityLabel="Customize dock"
-                  >
-                    +
-                  </Text>
-                </View>
-              ) : null}
             </Animated.View>
-
-            <Animated.View
-              style={[styles.grid, gridStyle]}
-              onLayout={(e) => onGridLayout(e.nativeEvent.layout.height)}
-              pointerEvents={expanded ? 'auto' : 'none'}
-            >
-              {orderedAll.map((category, index) => (
-                <DockNode
-                  key={category.id}
-                  category={category}
-                  index={index + 100}
-                  dragX={dragX}
-                  dragY={dragY}
-                  dragIndex={dragIndex}
-                  onDragBegin={beginDrag}
-                  onDragEnd={endDrag}
-                  onDragCancel={cancelDrag}
-                  onDragMove={onDragMove}
-                  onDragAbort={onDragAbort}
-                  onLongPress={onLongPress}
-                  collapseDrawer={() => animateExpand(false)}
-                />
-              ))}
-              {onCustomize ? (
-                <View style={[styles.node, styles.customize]}>
-                  <Text
-                    style={styles.customizeLabel}
-                    onPress={onCustomize}
-                    accessibilityRole="button"
-                    accessibilityLabel="Customize dock"
-                  >
-                    +
-                  </Text>
-                </View>
-              ) : null}
-            </Animated.View>
-          </View>
-        </Animated.View>
+          </Animated.View>
+        </GestureDetector>
       </View>
 
       {/* Drag ghost: follows the finger above the dock. */}
@@ -340,13 +262,18 @@ interface DockNodeProps {
   dragX: SharedValue<number>;
   dragY: SharedValue<number>;
   dragIndex: SharedValue<number>;
+  radialNodeIndex: SharedValue<number>;
+  closePan: ReturnType<typeof Gesture.Pan>;
   onDragBegin: (category: Category, index: number, x: number, y: number) => void;
   onDragEnd: (category: Category, x: number, y: number) => void;
   onDragCancel: () => void;
   onDragMove?: (x: number, y: number) => void;
   onDragAbort?: () => void;
+  onRadialMove?: (x: number, y: number) => void;
+  onRadialRelease?: (x: number, y: number) => void;
+  onRadialAbort?: () => void;
   onLongPress?: (category: Category, anchor: DockAnchor) => void;
-  /** Close the expanded drawer (called when a hold starts a drag). */
+  /** Close the drawer (called when a hold starts a drag or a radial). */
   collapseDrawer: () => void;
 }
 
@@ -359,11 +286,16 @@ function DockNode({
   dragX,
   dragY,
   dragIndex,
+  radialNodeIndex,
+  closePan,
   onDragBegin,
   onDragEnd,
   onDragCancel,
   onDragMove,
   onDragAbort,
+  onRadialMove,
+  onRadialRelease,
+  onRadialAbort,
   onLongPress,
   collapseDrawer,
 }: DockNodeProps) {
@@ -378,16 +310,22 @@ function DockNode({
   // What the hold activates, decided on the JS thread (worklets must never
   // branch on or call a captured function directly — see BlockCard).
   // The drawer closes first, whatever the hold becomes: a drag starts
-  // from a clear screen, and the radial (below) never sits on top of it.
+  // from a clear screen, and the radial never sits on top of it.
   const activateHold = useCallback(
     (cat: Category, idx: number, x: number, y: number) => {
       lightHaptic();
       collapseDrawer();
       const hasSubs = (cat.subcategories?.length ?? 0) > 0;
-      if (onLongPress && hasSubs) onLongPress(cat, { x, y });
-      else onDragBegin(cat, idx, x, y);
+      if (onLongPress && hasSubs) {
+        // The radial opens for this node: this node's Pan keeps tracking
+        // the finger and forwards it (onRadialMove) until release.
+        radialNodeIndex.value = idx;
+        onLongPress(cat, { x, y });
+      } else {
+        onDragBegin(cat, idx, x, y);
+      }
     },
-    [onLongPress, onDragBegin, collapseDrawer],
+    [onLongPress, onDragBegin, collapseDrawer, radialNodeIndex],
   );
 
   // Arm the drag (or open the radial) once the hold completes. The long
@@ -400,6 +338,7 @@ function DockNode({
     });
 
   const pan = Gesture.Pan()
+    .simultaneousWithExternalGesture(closePan)
     .onTouchesDown(() => {
       endedNormally.value = false;
       // Start the hold-progress cue the instant the finger lands.
@@ -407,6 +346,12 @@ function DockNode({
       else holdProgress.value = withTiming(1, { duration: HOLD_MS, easing: DECEL });
     })
     .onUpdate((e) => {
+      // Radial open for this node: forward the finger for subcategory
+      // hover/dwell — never cancel, the slide IS the interaction.
+      if (radialNodeIndex.value === index) {
+        if (onRadialMove) runOnJS(onRadialMove)(e.absoluteX, e.absoluteY);
+        return;
+      }
       // Moving past the cancel radius before activation aborts the hold
       // (this is a scroll, not a pick-up).
       if (dragIndex.value !== index && Math.hypot(e.translationX, e.translationY) > HOLD_CANCEL_PX) {
@@ -420,12 +365,23 @@ function DockNode({
       }
     })
     .onEnd((e) => {
+      if (radialNodeIndex.value === index) {
+        endedNormally.value = true;
+        radialNodeIndex.value = -1;
+        if (onRadialRelease) runOnJS(onRadialRelease)(e.absoluteX, e.absoluteY);
+        return;
+      }
       if (dragIndex.value === index) {
         endedNormally.value = true;
         runOnJS(onDragEnd)(category, e.absoluteX, e.absoluteY);
       }
     })
     .onFinalize(() => {
+      if (radialNodeIndex.value === index) {
+        // Touch interrupted while the radial was open: dismiss, never create.
+        radialNodeIndex.value = -1;
+        if (onRadialAbort) runOnJS(onRadialAbort)();
+      }
       if (dragIndex.value === index && !endedNormally.value) {
         // Armed drag interrupted before a release: tell the parent so it
         // can clear its drop highlight.
@@ -507,51 +463,11 @@ const styles = StyleSheet.create({
   dock: {
     position: 'absolute', left: 0, right: 0,
   },
+  // Transparent: no solid panel over the content below — the pills float.
   container: {
     overflow: 'hidden',
   },
-  drawerPanel: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-    backgroundColor: colors.paper,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    shadowColor: colors.carbon,
-    shadowOffset: { width: 0, height: -8 },
-    shadowOpacity: 0.15,
-    shadowRadius: 24,
-    elevation: 8,
-  },
-  handleWrap: {
-    alignItems: 'center',
-    paddingTop: 8,
-    paddingBottom: 4,
-  },
-  handle: {
-    width: 44,
-    height: 5,
-    borderRadius: 999,
-    backgroundColor: colors.carbon,
-    opacity: 0.25,
-  },
-  body: {
-    position: 'relative',
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingBottom: 10,
-    gap: 6,
-  },
   grid: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'center',
@@ -570,11 +486,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderWidth: 1,
     borderColor: hairline,
-    shadowColor: colors.carbon,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    elevation: 3,
+    ...shadows.soft,
     flexShrink: 1,
     minWidth: 0,
   },
@@ -586,15 +498,6 @@ const styles = StyleSheet.create({
     height: RING_GEOMETRY.ringSize,
   },
   label: { fontFamily: fonts.medium, fontSize: 14, color: colors.carbon, flexShrink: 1 },
-  customize: {
-    paddingHorizontal: 0,
-    width: 40,
-    height: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  customizeLabel: { fontFamily: fonts.semibold, fontSize: 22, color: colors.carbon, lineHeight: 26 },
   ghost: {
     position: 'absolute',
     left: 0,

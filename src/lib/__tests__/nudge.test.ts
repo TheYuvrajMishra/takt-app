@@ -2,6 +2,52 @@
 // template-scope / versioning helpers (src/store/useStore.ts).
 // Native modules are mocked: no real notifications or sqlite are touched.
 import { describe, expect, it, vi } from 'vitest';
+import * as Notifications from 'expo-notifications';
+import { ALARM_SOUND_FILE, initNudges } from '../nudge';
+
+describe('alarm sound', () => {
+  const mocked = Notifications as unknown as {
+    setNotificationChannelAsync: ReturnType<typeof vi.fn>;
+    getNotificationChannelAsync: ReturnType<typeof vi.fn>;
+    deleteNotificationChannelAsync: ReturnType<typeof vi.fn>;
+  };
+
+  it('creates the nudge channel with the alarm sound', async () => {
+    mocked.getNotificationChannelAsync.mockResolvedValue(null);
+    mocked.setNotificationChannelAsync.mockClear();
+    mocked.deleteNotificationChannelAsync.mockClear();
+    await initNudges();
+    expect(mocked.setNotificationChannelAsync).toHaveBeenCalledWith(
+      'takt-nudges',
+      expect.objectContaining({ sound: ALARM_SOUND_FILE }),
+    );
+    expect(mocked.deleteNotificationChannelAsync).not.toHaveBeenCalled();
+  });
+
+  it('migrates a channel that still has the default sound', async () => {
+    mocked.getNotificationChannelAsync.mockResolvedValue({ sound: 'default' });
+    mocked.setNotificationChannelAsync.mockClear();
+    mocked.deleteNotificationChannelAsync.mockClear();
+    await initNudges();
+    expect(mocked.deleteNotificationChannelAsync).toHaveBeenCalledWith('takt-nudges');
+    expect(mocked.setNotificationChannelAsync).toHaveBeenCalledWith(
+      'takt-nudges',
+      expect.objectContaining({ sound: ALARM_SOUND_FILE }),
+    );
+  });
+
+  it('leaves a channel that already has the alarm sound alone', async () => {
+    mocked.getNotificationChannelAsync.mockResolvedValue({ sound: ALARM_SOUND_FILE });
+    mocked.setNotificationChannelAsync.mockClear();
+    mocked.deleteNotificationChannelAsync.mockClear();
+    await initNudges();
+    expect(mocked.deleteNotificationChannelAsync).not.toHaveBeenCalled();
+    expect(mocked.setNotificationChannelAsync).toHaveBeenCalledWith(
+      'takt-nudges',
+      expect.objectContaining({ sound: ALARM_SOUND_FILE }),
+    );
+  });
+});
 
 vi.mock('expo-notifications', () => ({
   AndroidImportance: { HIGH: 6 },
@@ -10,6 +56,8 @@ vi.mock('expo-notifications', () => ({
   DEFAULT_ACTION_IDENTIFIER: 'default',
   setNotificationHandler: vi.fn(),
   setNotificationChannelAsync: vi.fn(async () => null),
+  getNotificationChannelAsync: vi.fn(async () => null),
+  deleteNotificationChannelAsync: vi.fn(async () => undefined),
   setNotificationCategoryAsync: vi.fn(async () => ({})),
   getPermissionsAsync: vi.fn(async () => ({ status: 'granted' })),
   requestPermissionsAsync: vi.fn(async () => ({ status: 'granted' })),

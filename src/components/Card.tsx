@@ -1,9 +1,17 @@
 // Takt — Card. Paper (white) raised card only; cloud is the app background,
 // never a card fill (DESIGN.md).
+//
+// Realistic shadow: TWO shadows, layered by nesting — a large soft ambient
+// on the outer shell plus a tight contact shadow on the inner card (one
+// shadow per view is all the platform gives us, so the pair is what makes
+// the lift read as real). Both shells are paper; the inner covers the
+// outer exactly, so only the shadows show. A subtle paper grain sits on
+// top of the fill (translucent, so text stays crisp through it).
 import type { ReactNode } from 'react';
 import type { PressableProps, ViewStyle } from 'react-native';
 import { Pressable, StyleSheet, View } from 'react-native';
-import { colors, radii } from '../theme/tokens';
+import { colors, radii, shadows } from '../theme/tokens';
+import { PaperTexture } from './PaperTexture';
 
 export interface CardProps {
   children: ReactNode;
@@ -17,36 +25,42 @@ export interface CardProps {
 }
 
 export function Card({ children, color = colors.paper, radius = radii.card, style, onPress, testID }: CardProps) {
+  const shellStyle = { backgroundColor: color, borderRadius: radius };
+  const inner = (
+    <>
+      {children}
+      <PaperTexture radius={radius} />
+    </>
+  );
   if (onPress) {
     return (
-      <Pressable
-        testID={testID}
-        onPress={onPress}
-        style={({ pressed }) => [
-          styles.base,
-          { backgroundColor: color, borderRadius: radius, opacity: pressed ? 0.92 : 1 },
-          style,
-        ]}
-      >
-        {children}
-      </Pressable>
+      <View testID={testID} style={[styles.ambient, shellStyle, style]}>
+        <Pressable
+          onPress={onPress}
+          style={({ pressed }) => [
+            styles.contact,
+            shellStyle,
+            { opacity: pressed ? 0.92 : 1 },
+          ]}
+        >
+          {inner}
+        </Pressable>
+      </View>
     );
   }
   return (
-    <View testID={testID} style={[styles.base, { backgroundColor: color, borderRadius: radius }, style]}>
-      {children}
+    <View testID={testID} style={[styles.ambient, shellStyle, style]}>
+      <View style={[styles.contact, shellStyle]}>{inner}</View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  base: {
+  ambient: {
+    ...shadows.ambient,
+  },
+  contact: {
+    ...shadows.contact,
     padding: 20,
-    // Soft lift, carbon-tinted shadow (no grey token).
-    shadowColor: colors.carbon,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
-    elevation: 3,
   },
 });

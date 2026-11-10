@@ -27,10 +27,10 @@ import { BigButton } from '../../components/BigButton';
 import { BlockChip, BLOCK_CHIP_WIDTH } from '../../components/BlockChip';
 import { Sheet } from '../../components/Sheet';
 import { Dock } from '../../components/Dock';
-import type { DockAnchor } from '../../components/Dock';
-import { ScrollScreen, useDockExpandedState } from '../../components/layout';
+import { ScrollScreen } from '../../components/layout';
 import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import { RadialMenu } from '../../components/RadialMenu';
+import { useRadialDrag } from '../../components/useRadialDrag';
 import { EndOfDaySheet } from '../../components/EndOfDaySheet';
 import { CategoryIcon } from '../../components/CategoryIcon';
 import { formatSize, useUpdaterStore } from '../../lib/updater';
@@ -87,7 +87,6 @@ export default function TodayScreen() {
   const [doneOpen, setDoneOpen] = useState(false);
   const [sheetBlock, setSheetBlock] = useState<Block | null>(null);
   const [notesDraft, setNotesDraft] = useState('');
-  const [radial, setRadial] = useState<{ category: Category; anchor: DockAnchor } | null>(null);
   const [summaryVisible, setSummaryVisible] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const stripRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
@@ -95,11 +94,7 @@ export default function TodayScreen() {
   const summaryShownRef = useRef(false);
   // Drop-target highlight while a category is being dragged in from the
   // dock or the radial: the section under the finger tints butter.
-  const [, setDockExpanded] = useDockExpandedState();
   const [highlightedSection, setHighlightedSection] = useState<string | null>(null);
-  // After the radial's dwell, the drawer is closed and this drag is armed:
-  // the ghost follows the finger until release drops it in.
-  const [radialDrag, setRadialDrag] = useState<{ category: Category; subcategoryId?: string } | null>(null);
   const sectionLayoutsRef = useRef(new Map<string, { y: number; height: number }>());
   const scrollYRef = useRef(0);
   const ghostX = useSharedValue(0);
@@ -245,30 +240,32 @@ export default function TodayScreen() {
   }, []);
 
   const handleRadialCreate = (category: Category, subcategoryId?: string) => {
-    setRadial(null);
+    setHighlightedSection(null);
     createInEarliestSlot(category, subcategoryId);
   };
 
-  // Dwell on a subcategory: the drawer closes automatically and the drag
-  // arms. The radial stays mounted (hidden) tracking the finger; release
-  // drops it in (handleRadialDrop). Nothing is created yet.
-  const handleRadialAttach = (category: Category, subcategoryId?: string) => {
-    setDockExpanded(false);
-    setRadialDrag({ category, subcategoryId });
-  };
-
+  // Release after a dwell-armed radial drag: drop it in the earliest
+  // empty slot (drop-anywhere = earliest slot remains the creation rule
+  // on Today). Nothing is created until this release.
   const handleRadialDrop = (category: Category, subcategoryId: string | undefined) => {
-    setRadial(null);
-    setRadialDrag(null);
     setHighlightedSection(null);
     createInEarliestSlot(category, subcategoryId);
   };
 
   const dismissRadial = useCallback(() => {
-    setRadial(null);
-    setRadialDrag(null);
     setHighlightedSection(null);
   }, []);
+
+  // Radial quick-add (one continuous touch — hold, slide, hover 300ms,
+  // drag, release): the hook owns the hover / dwell / attach machine;
+  // the dock forwards the finger and this screen only decides what
+  // "create" and "drop" mean.
+  const radial = useRadialDrag({
+    onCreate: handleRadialCreate,
+    onDrop: handleRadialDrop,
+    onDragMove: handleDragMove,
+    onDismiss: dismissRadial,
+  });
 
   // --- Sheet actions (all "Today only") -----------------------------------
   // Category / notes edits go through the store's patchBlock, which keeps
@@ -523,35 +520,32 @@ export default function TodayScreen() {
       {/* Dock + radial quick-add */}
       <Dock
         categories={categories}
-        onLongPress={(category, anchor) => setRadial({ category, anchor })}
+        onLongPress={(category, anchor) => radial.openRadial(category, anchor)}
         onDrop={handleDockDrop}
         onDragMove={handleDragMove}
         onDragAbort={clearDragHighlight}
-        onCustomize={() => setToastMsg('Dock customization coming soon.')}
+        onRadialMove={radial.handleRadialMove}
+        onRadialRelease={radial.handleRadialRelease}
+        onRadialAbort={radial.abortRadial}
       />
-      {radial ? (
+      {radial.radial && !radial.attached ? (
         <RadialMenu
-          visible
-          category={radial.category}
-          anchor={radial.anchor}
-          onCreate={handleRadialCreate}
-          onAttach={handleRadialAttach}
-          onDismiss={dismissRadial}
-          onDragMove={handleDragMove}
-          onDrop={handleRadialDrop}
+          category={radial.radial.category}
+          anchor={radial.radial.anchor}
+          highlightedIndex={radial.hoveredIndex}
         />
       ) : null}
       {/* Ghost for a radial-armed drag: follows the finger until release. */}
-      {radialDrag ? (
+      {radial.attached ? (
         <Animated.View style={[styles.dragGhost, dragGhostStyle]} pointerEvents="none">
           <CategoryIcon
-            icon={radialDrag.category.icon}
-            color={radialDrag.category.color}
+            icon={radial.attached.category.icon}
+            color={radial.attached.category.color}
             size={24}
           />
           <Text style={styles.dragGhostLabel}>
-            {radialDrag.category.subcategories?.find((s) => s.id === radialDrag.subcategoryId)?.name ??
-              radialDrag.category.name}
+            {radial.attached.category.subcategories?.find((s) => s.id === radial.attached?.subcategoryId)?.name ??
+              radial.attached.category.name}
           </Text>
         </Animated.View>
       ) : null}

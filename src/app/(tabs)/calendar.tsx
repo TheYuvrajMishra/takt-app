@@ -15,7 +15,7 @@ import { Pressable, ScrollView, StyleSheet, Switch, useWindowDimensions, View, t
 import { Text, TextInput } from '../../components/TText';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
-import { runOnJS, useSharedValue } from 'react-native-reanimated';
+import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import {
   DEFAULT_CATEGORIES,
@@ -39,6 +39,9 @@ import {
 } from '../../components/calendar/helpers';
 import { BlockCard } from '../../components/calendar/BlockCard';
 import { Dock } from '../../components/Dock';
+import { RadialMenu } from '../../components/RadialMenu';
+import { useRadialDrag } from '../../components/useRadialDrag';
+import { CategoryIcon } from '../../components/CategoryIcon';
 import { Sheet } from '../../components/Sheet';
 import { useBottomInset, ScrollScreen } from '../../components/layout';
 import { useStore } from '../../store/useStore';
@@ -972,7 +975,7 @@ export default function CalendarScreen() {
   // (column = day, y = start time). A drop outside the grid falls back to
   // the earliest free slot, same as the old tap-to-add behaviour.
   const dockCreateEarliest = useCallback(
-    (cat: Category) => {
+    (cat: Category, subcategoryId?: string) => {
       const list = getBlocksForDate(anchorKey);
       const fromMin = anchorKey === todayKey ? nowMin : 0;
       const slot = earliestEmptySlot(list, fromMin, DEFAULT_DURATION_MIN);
@@ -980,10 +983,12 @@ export default function CalendarScreen() {
         showToast('No empty 25-min slot left today');
         return;
       }
+      const sub = cat.subcategories?.find((s) => s.id === subcategoryId);
       const block: Block = {
         id: newId(),
         categoryId: cat.id,
-        title: cat.name,
+        subcategoryId,
+        title: sub?.name ?? cat.name,
         startMin: slot,
         durationMin: DEFAULT_DURATION_MIN,
       };
@@ -997,10 +1002,10 @@ export default function CalendarScreen() {
   );
 
   const handleDockDrop = useCallback(
-    (category: Category, x: number, y: number) => {
+    (category: Category, x: number, y: number, subcategoryId?: string) => {
       const node = gridRef.current;
       if (!node) {
-        dockCreateEarliest(category);
+        dockCreateEarliest(category, subcategoryId);
         return;
       }
       node.measure((_mx, _my, _w, _h, pageX, pageY) => {
@@ -1018,15 +1023,17 @@ export default function CalendarScreen() {
           localY < 0 ||
           localY > HOURS * hourHeightRef.current
         ) {
-          dockCreateEarliest(category);
+          dockCreateEarliest(category, subcategoryId);
           return;
         }
         const date = dateKey(visibleDates[colIdx]);
         const list = getBlocksForDate(date);
+        const sub = category.subcategories?.find((s) => s.id === subcategoryId);
         const block: Block = {
           id: newId(),
           categoryId: category.id,
-          title: category.name,
+          subcategoryId,
+          title: sub?.name ?? category.name,
           startMin,
           durationMin: DEFAULT_DURATION_MIN,
         };
@@ -1036,7 +1043,7 @@ export default function CalendarScreen() {
           return;
         }
         requestScope(
-          `Added ${category.name} at ${minToTime(block.startMin)}`,
+          `Added ${sub?.name ?? category.name} at ${minToTime(block.startMin)}`,
           (scope) => applyCreated(date, list, merged, block.id, scope),
         );
       });
@@ -1044,6 +1051,27 @@ export default function CalendarScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [colW, visibleDates, dockCreateEarliest, requestScope, applyCreated, showToast, templates, dayOverrides],
   );
+
+  // Radial quick-add (one continuous touch — hold, slide, hover 300ms,
+  // drag, release): the hook owns the hover / dwell / attach machine;
+  // dropping at the finger's position creates the block there (same as a
+  // direct dock drop), falling back to the earliest slot outside the grid.
+  const radialGhostX = useSharedValue(0);
+  const radialGhostY = useSharedValue(0);
+  const radial = useRadialDrag({
+    onCreate: (category, subcategoryId, x, y) => handleDockDrop(category, x, y, subcategoryId),
+    onDrop: (category, subcategoryId, x, y) => handleDockDrop(category, x, y, subcategoryId),
+    onDragMove: (x, y) => {
+      radialGhostX.value = x;
+      radialGhostY.value = y;
+    },
+  });
+  const radialGhostStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: radialGhostX.value - 56 },
+      { translateY: radialGhostY.value - 28 },
+    ],
+  }));
 
   // ---- gestures: pinch zoom + two-finger day swipe -----------------------
   // The grid scrolls inside a native ScrollView. Without the native
@@ -1243,13 +1271,6 @@ export default function CalendarScreen() {
           <Pressable onPress={() => step(1)} style={styles.navBtn} accessibilityLabel="Next">
             <Text style={styles.navBtnText}>›</Text>
           </Pressable>
-          <Pressable onPress={() => commitZoom(hourHeight - 16)} style={styles.navBtn} accessibilityLabel="Zoom out">
-            <Text style={styles.navBtnText}>−</Text>
-          </Pressable>
-          <Text style={styles.zoomLabel}>{Math.round((hourHeight / 64) * 100)}%</Text>
-          <Pressable onPress={() => commitZoom(hourHeight + 16)} style={styles.navBtn} accessibilityLabel="Zoom in">
-            <Text style={styles.navBtnText}>+</Text>
-          </Pressable>
           <Pressable onPress={() => setTemplateSheet(true)} style={styles.applyBtn}>
             <Text style={styles.applyBtnText}>Apply to…</Text>
           </Pressable>
@@ -1332,9 +1353,33 @@ export default function CalendarScreen() {
         {/* Shared dock: drag a node onto the grid to place a block there */}
         <Dock
           categories={cats}
+          onLongPress={(category, anchor) => radial.openRadial(category, anchor)}
           onDrop={handleDockDrop}
-          onCustomize={() => showToast('Dock customization coming soon.')}
+          onRadialMove={radial.handleRadialMove}
+          onRadialRelease={radial.handleRadialRelease}
+          onRadialAbort={radial.abortRadial}
         />
+        {radial.radial && !radial.attached ? (
+          <RadialMenu
+            category={radial.radial.category}
+            anchor={radial.radial.anchor}
+            highlightedIndex={radial.hoveredIndex}
+          />
+        ) : null}
+        {/* Ghost for a radial-armed drag: follows the finger until release. */}
+        {radial.attached ? (
+          <Animated.View style={[styles.dragGhost, radialGhostStyle]} pointerEvents="none">
+            <CategoryIcon
+              icon={radial.attached.category.icon}
+              color={radial.attached.category.color}
+              size={24}
+            />
+            <Text style={styles.dragGhostLabel}>
+              {radial.attached.category.subcategories?.find((s) => s.id === radial.attached?.subcategoryId)?.name ??
+                radial.attached.category.name}
+            </Text>
+          </Animated.View>
+        ) : null}
 
         {toast && (
           <View style={[styles.toast, { bottom: bottomInset + 8 }]}>
@@ -1676,6 +1721,25 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   ghost: { position: 'absolute', borderRadius: 12, borderWidth: 2, borderColor: colors.carbon, borderStyle: 'dashed' },
+  dragGhost: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: colors.carbon,
+    borderRadius: radii.pill,
+    paddingLeft: 8,
+    paddingRight: 16,
+    paddingVertical: 8,
+    shadowColor: colors.carbon,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 6,
+  },
+  dragGhostLabel: { fontFamily: fonts.semibold, fontSize: 15, color: colors.paper },
   tooltip: {
     position: 'absolute',
     backgroundColor: colors.carbon,
@@ -1709,7 +1773,6 @@ const styles = StyleSheet.create({
   },
   toastText: { fontFamily: fonts.medium, fontSize: 13, color: colors.paper },
   sheetBody: { gap: 10 },
-  zoomLabel: { fontFamily: fonts.medium, fontSize: 12, color: faintText, minWidth: 34, textAlign: 'center' },
   sheetSub: { fontFamily: fonts.regular, fontSize: 14, color: colors.carbon, lineHeight: 20 },
   sheetNote: { fontFamily: fonts.regular, fontSize: 12, color: faintText, lineHeight: 17 },
   sheetLabel: { fontFamily: fonts.medium, fontSize: 13, color: colors.carbon, marginTop: 4 },

@@ -11,6 +11,12 @@
 - Font: Inter Tight — Regular 400, Medium 500, SemiBold 600 only. Headlines big + confident, percentages oversized light-weight numerals.
 - Hairlines: carbon at 10–15% opacity only. No grey token, no slate, no blue-black, no grey text.
 - Film grain: Skia noise or tiled PNG at ~4–6% opacity over whole app.
+- Paper texture: cards carry the grain tile inside them (`PaperTexture`,
+  5% on `Card`, 4% on calendar blocks) — a subtle paper feel, not a
+  pattern. Realistic shadows are LAYERED (`shadows` in tokens): a large
+  soft ambient + a tight contact shadow, nested two views deep (`Card`
+  does this; small surfaces take the single `soft` shadow, lifted ones
+  `lifted`). Carbon-tinted, never grey.
 - Hatch: 45° diagonal stripes for "unfilled"/upcoming segments and hatched card accents.
 - Icons: custom SVG, 1.75px stroke, rounded caps, carbon stroke on color fill.
 - NO emoji anywhere (UI, notifications, copy).
@@ -52,11 +58,17 @@
   thread, measured per tab via `onLayout`. Icons cross-fade outline →
   filled; labels reveal (opacity + small slide). Pressed tab scales to
   0.97 with timing; light haptic on tab change.
-- Screen transitions: cross-fade + subtle 10px translate in the direction
-  of travel (custom `sceneStyleInterpolator` + 280ms timing spec — the
-  built-in 'shift' uses 50px, too far). Reduce-motion falls back to quick
+- Screen transitions: a real slide (±56px) + fade in the direction of
+  travel (custom `sceneStyleInterpolator` + 300ms timing spec). Reduce-motion falls back to quick
   120ms fades. Total feedback under 400ms; tab screens stay mounted, so
   each keeps its scroll position.
+- Swipe between tabs: a one-finger horizontal swipe anywhere on the
+  screen slides to the next / previous tab (Today → Calendar → Stats),
+  with the same slide transition. The swipe Pan wraps the whole tab
+  navigator; inner gestures win on their own targets (a block drag, a
+  dock drag, a hold all activate first and cancel it), a mostly-vertical
+  swipe is a scroll, and while the category drawer is open swipes stay
+  with the drawer.
 
 ## Selection law (Fix 1 — dock)
 - Selection NEVER comes from a tap or a swipe. It takes a press-and-hold
@@ -67,20 +79,31 @@
   see `RING_GEOMETRY` in `src/components/dockHelpers.ts`, tested). The
   ring's position is explicit constants, never `top: '50%'` (that resolves
   against the content-box height and sat the ring 6dp too high).
-- The dock is a fixed row of the 3–4 most-used chips (usage-ordered, most
-  important at both ends) with a drag handle; the collapsed container is
-  transparent (no solid band over the content below). Swipe up on the
-  dock/handle (or tap the handle) expands it into a drawer panel with all
-  chips. The drawer's height is driven by measured heights mirrored into
-  shared values (`rowHSV`/`gridHSV`/`handleHSV` — never refs: a worklet
-  captures its closure at install time, so a ref reads its initial value
-  forever and the drawer stays clipped to one row). Swipe down or tap outside collapses. A hold closes the drawer
-  first, then: a category with subcategories opens the radial menu (Today),
-  anything else starts a drag. While dragging, the section under the
-  finger highlights; on Today the drop creates in the earliest empty slot.
-- Radial subcategory flow (Today): hold a category with subs → options
-  bloom → drag the pointer to highlight one → dwelling 450ms closes the
-  drawer automatically and arms the drag → release drops it in.
+- The dock is INVISIBLE until called for — there is no collapsed strip.
+  Swipe up anywhere on the navbar (or tap the small up-arrow bobbing
+  above it, Today + Calendar only) opens a drawer of ALL chips
+  (usage-ordered, most important at both ends). The drawer is transparent
+  (no solid panel over the content), its pills float on paper chips, and
+  it sits 8dp above the navbar (`DRAWER_TO_NAV_GAP`). Swipe down on the
+  drawer or tap outside closes it. The drawer's height is driven by the
+  measured grid height mirrored into a shared value (`gridHSV` — never a
+  ref: a worklet captures its closure at install time, so a ref reads its
+  initial value forever and the drawer stays clipped to one row). A hold
+  closes the drawer first, then: a category with subcategories opens the
+  radial menu (Today and Calendar), anything else starts a drag. While
+  dragging, the section under the finger highlights; on Today the drop
+  creates in the earliest empty slot, on Calendar it creates at the drop
+  position.
+- Radial subcategory flow (Today and Calendar), ONE continuous touch —
+  hold (300ms) → subcategories bloom → slide the finger to one → hover it
+  300ms (`RADIAL_HOVER_MS`) and the drag arms (ghost follows the finger)
+  → release drops it in. No lift, no tap: the radial mounts mid-touch
+  and a gesture that mounts mid-touch can never see the finger already
+  down, so the dock node's Pan (which owns the touch from finger-down)
+  forwards the positions and `useRadialDrag` owns the hover / dwell /
+  attach machine; the radial itself is visual-only (`pointerEvents="none"`).
+  Releasing while hovering (before the dwell) creates that subcategory
+  immediately; releasing on empty space dismisses.
 
 ## Calendar blocks (Fix 2)
 - Blocks render adaptively by height (`variantForHeight`): tiny blocks
@@ -92,7 +115,11 @@
   resizing need a 300ms hold first (haptic + lift), snap to 5 minutes with
   a haptic tick per snap, and ask scope afterwards ("Today only" /
   "From today onwards") with undo. Pinch zoom changes hour height
-  48→240dp and is persisted in Settings.
+  48→240dp and is persisted in Settings; there is no zoom stepper in the
+  header (pinch only). Resize has NO visible grip lines — the top/bottom
+  edge zones resize, but the lines cluttered tiny blocks.
+- Blocks carry a subtle paper grain (`PaperTexture`, 4%) and a soft resting
+  shadow that deepens while lifted (`shadows.soft` → `shadows.lifted`).
 - Gesture composition law (learned 2026-11-10 — drag/resize were dead on
   device): a LongPress and a manual-activation Pan MUST be
   `Gesture.Simultaneous(hold, pan)`, with the tap `Exclusive` against the
@@ -132,3 +159,16 @@
   sheet. The downloaded APK is deleted after the app is replaced. After
   an update: a "What's new" card from the release notes + nudges
   rescheduled.
+
+## Nudge alarm sound
+- Nudges (a block starting = "up next", a block still open past its end
+  = "missed") play a real alarm tone, not the default ping:
+  `assets/sounds/alarm.wav` (generated two-tone beeps, see
+  `scripts/gen-alarm-sound.mjs`), bundled by the expo-notifications
+  plugin (`app.json` `sounds` — prebuild copies it to `res/raw`).
+- The channel (`takt-nudges`) carries the sound on Android and each
+  notification carries it in its content (iOS). A channel's sound cannot
+  be changed in place on Android: an existing channel with the default
+  sound is deleted + recreated with the alarm on init — only that case
+  migrates, so a channel that already has a custom sound, or one the
+  user silenced, is left alone. Guarded by `nudge.test.ts`.

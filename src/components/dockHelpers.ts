@@ -2,16 +2,11 @@
 // the real values (same pattern as components/calendar/helpers.ts).
 import type { Category } from '../types';
 
-/** Collapsed row shows 3–4 chips (4 on wide screens, 3 on narrow) — the
-    rest live in the swipe-up drawer. */
-export function collapsedCountForWidth(width: number): number {
-  return width >= 400 ? 4 : 3;
-}
-
 /**
  * Usage ordering: most-used categories sit at both ends, least-used in the
  * middle. Built inside-out: start from the least-used item in the middle and
- * wrap increasingly-used items around it, alternating sides.
+ * wrap increasingly-used items around it, alternating sides. The drawer
+ * shows ALL categories in this order (the collapsed strip is gone).
  */
 export function orderDockCategories(categories: Category[]): Category[] {
   const ascending = [...categories].sort(
@@ -23,14 +18,6 @@ export function orderDockCategories(categories: Category[]): Category[] {
     else out.push(cat);
   });
   return out;
-}
-
-/** The 3–4 most-used categories, ordered most-important at both ends. */
-export function topDockCategories(categories: Category[], max: number): Category[] {
-  const top = [...categories]
-    .sort((a, b) => (b.usageCount ?? 0) - (a.usageCount ?? 0))
-    .slice(0, max);
-  return orderDockCategories(top);
 }
 
 /**

@@ -10,6 +10,18 @@ import { setAfterChangeHook, useStore } from '../store/useStore';
 
 export const NUDGE_CHANNEL_ID = 'takt-nudges';
 export const NUDGE_CATEGORY_ID = 'takt-block';
+/**
+ * Alarm sound for nudges (missed blocks + up next). The file lives in
+ * assets/sounds/alarm.wav and is bundled into the native project by the
+ * expo-notifications plugin (app.json `sounds` — prebuild copies it to
+ * res/raw). On Android the channel carries the sound; on iOS each
+ * notification carries it in its content. Changing the channel's sound on
+ * an existing install needs a delete + recreate (Android ignores sound
+ * changes on an existing channel) — ensureChannelAndCategory does that
+ * only when the current channel's sound is not already this one, so a
+ * user's other channel settings are left alone.
+ */
+export const ALARM_SOUND_FILE = 'alarm.wav';
 export const ACTION_DONE = 'done';
 export const ACTION_START = 'start';
 export const ACTION_SNOOZE = 'snooze-10';
@@ -262,11 +274,24 @@ export function buildNudgePlan(input: BuildNudgePlanInput): NudgePlanItem[] {
 async function ensureChannelAndCategory(): Promise<void> {
   // Android only; on iOS this is a no-op that resolves null — hence try/catch.
   try {
+    // A channel's sound cannot be changed in place on Android: if this
+    // install still has the old channel (default sound), delete + recreate
+    // it with the alarm sound. Only the 'default' case migrates — a channel
+    // that already has a custom sound is ours (leave it), and a null sound
+    // means the user silenced the channel (respect that, don't un-mute it).
+    const existing = await Notifications.getNotificationChannelAsync(NUDGE_CHANNEL_ID).catch(
+      () => null,
+    );
+    if (existing && existing.sound === 'default') {
+      await Notifications.deleteNotificationChannelAsync(NUDGE_CHANNEL_ID).catch(() => {
+        // The channel may already be gone; creating it below still works.
+      });
+    }
     await Notifications.setNotificationChannelAsync(NUDGE_CHANNEL_ID, {
       name: 'Takt nudges',
       description: 'Reminders to start your scheduled blocks.',
       importance: Notifications.AndroidImportance.HIGH,
-      sound: 'default',
+      sound: ALARM_SOUND_FILE,
       vibrationPattern: [0, 250, 250, 250],
       enableVibrate: true,
       lightColor: '#0A0A0A',
@@ -400,6 +425,9 @@ async function doReschedule(): Promise<number> {
       content: {
         title: copy.title,
         body: copy.body,
+        // The alarm sound: the channel carries it on Android, but iOS
+        // takes the sound per notification, so set it here too.
+        sound: ALARM_SOUND_FILE,
         categoryIdentifier: NUDGE_CATEGORY_ID,
         data: {
           blockId: item.blockId,
@@ -539,6 +567,7 @@ export async function testNudgeNow(title = 'Takt test'): Promise<string> {
     content: {
       title: 'Takt test nudge',
       body: `${title} — nudges are working. Tap the notification to open Takt.`,
+      sound: ALARM_SOUND_FILE,
       categoryIdentifier: NUDGE_CATEGORY_ID,
       data: { test: true },
     },

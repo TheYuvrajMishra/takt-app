@@ -30,6 +30,48 @@ export const statusColors = {
 
 export const radii = { card: 32, cardSm: 28, pill: 999, sheet: 36 } as const;
 
+/**
+ * Realistic shadows: carbon-tinted, never grey. A card gets TWO — a large
+ * soft ambient plus a tight contact shadow — layered by nesting two
+ * views (see Card): one shadow per view is all the platform gives us,
+ * so the pair is what makes the lift read as real. Smaller surfaces
+ * (chips, pills, blocks at rest) take a single soft one.
+ */
+export const shadows = {
+  /** Large soft ambient: the card floating above the page. */
+  ambient: {
+    shadowColor: colors.carbon,
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.07,
+    shadowRadius: 24,
+    elevation: 4,
+  },
+  /** Tight contact: the card's edge meeting the surface. */
+  contact: {
+    shadowColor: colors.carbon,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  /** Single soft shadow for small surfaces at rest (blocks, pills). */
+  soft: {
+    shadowColor: colors.carbon,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.09,
+    shadowRadius: 10,
+    elevation: 2,
+  },
+  /** Lifted while dragged / pressed: stronger, higher. */
+  lifted: {
+    shadowColor: colors.carbon,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.22,
+    shadowRadius: 20,
+    elevation: 8,
+  },
+} as const;
+
 export const spacing = { xs: 8, sm: 12, md: 16, lg: 24, xl: 32, xxl: 48 } as const;
 
 // Hairline only: carbon at low opacity. Never a grey fill/text.
