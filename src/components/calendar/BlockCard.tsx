@@ -47,51 +47,85 @@ function tick(): void {
 const RESIZE_ZONE = 22;
 
 export function BlockCard(props: BlockCardProps) {
-  const { block, hourHeight } = props;
+  // Worklets (gesture callbacks + useAnimatedStyle) run on the UI runtime.
+  // They must NEVER reach into the `props` object: `props` holds functions,
+  // so the Worklets runtime treats it as a remote object and any access from
+  // a worklet throws "Tried to synchronously call a Remote Function"
+  // (crashed on device the first time a block was touched). Destructure every
+  // value a worklet needs up front — primitives and function refs are copied
+  // into the worklet closure cleanly. `dragging` changes over time, so it is
+  // mirrored into a shared value (same pattern as `magnet` below) instead of
+  // being read from props inside useAnimatedStyle.
+  const {
+    block,
+    top,
+    left,
+    width,
+    height,
+    hourHeight,
+    dragging,
+    magnetEdges,
+    onInteractionStart,
+    onInteractionEnd,
+    onDragStart,
+    onDragPreview,
+    onDragEnd,
+    onResizeStart,
+    onResizePreview,
+    onResizeEnd,
+    onLongPressBlock,
+    onTapBlock,
+    onDragCancel,
+  } = props;
+  const { id: blockId, startMin: blockStartMin, durationMin: blockDurationMin } = block;
   const categories = useStore((s) => s.categories);
   const reducedMotion = useAppReducedMotion();
   const ty = useSharedValue(0);
-  const lastSnap = useSharedValue(block.startMin);
-  const lastDur = useSharedValue(block.durationMin);
+  const lastSnap = useSharedValue(blockStartMin);
+  const lastDur = useSharedValue(blockDurationMin);
   const mode = useSharedValue(0); // 0 = move, 1 = resize
   const magnet = useSharedValue<number[]>([]);
+  const draggingSV = useSharedValue(dragging);
 
   useEffect(() => {
-    magnet.value = props.magnetEdges;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.magnetEdges]);
+    magnet.value = magnetEdges;
+  }, [magnetEdges]);
+
+  useEffect(() => {
+    draggingSV.value = dragging;
+  }, [dragging]);
 
   const pan = Gesture.Pan()
     .activeOffsetX([-6, 6])
     .activeOffsetY([-6, 6])
     .onBegin(() => {
-      runOnJS(props.onInteractionStart)();
+      runOnJS(onInteractionStart)();
     })
     .onStart((e) => {
-      if (e.y > props.height - RESIZE_ZONE) {
+      if (e.y > height - RESIZE_ZONE) {
         mode.value = 1;
-        lastDur.value = block.durationMin;
-        runOnJS(props.onResizeStart)(block.id);
+        lastDur.value = blockDurationMin;
+        runOnJS(onResizeStart)(blockId);
       } else {
         mode.value = 0;
-        lastSnap.value = block.startMin;
-        runOnJS(props.onDragStart)(block.id);
+        lastSnap.value = blockStartMin;
+        runOnJS(onDragStart)(blockId);
       }
     })
     .onUpdate((e) => {
       if (mode.value === 1) {
-        const raw = block.durationMin + (e.translationY / hourHeight) * 60;
-        const d = snap5(Math.max(15, Math.min(24 * 60 - block.startMin, raw)));
+        const raw = blockDurationMin + (e.translationY / hourHeight) * 60;
+        const d = snap5(Math.max(15, Math.min(24 * 60 - blockStartMin, raw)));
         if (d !== lastDur.value) {
           lastDur.value = d;
-          runOnJS(props.onResizePreview)(block.id, d);
+          runOnJS(onResizePreview)(blockId, d);
           runOnJS(tick)();
         }
         return;
       }
       ty.value = e.translationY;
-      const raw = block.startMin + (e.translationY / hourHeight) * 60;
-      let s = snap5(Math.max(0, Math.min(24 * 60 - block.durationMin, raw)));
+      const raw = blockStartMin + (e.translationY / hourHeight) * 60;
+      let s = snap5(Math.max(0, Math.min(24 * 60 - blockDurationMin, raw)));
       for (const edge of magnet.value) {
         if (Math.abs(s - edge) <= 8) {
           s = edge;
@@ -100,46 +134,46 @@ export function BlockCard(props: BlockCardProps) {
       }
       if (s !== lastSnap.value) {
         lastSnap.value = s;
-        runOnJS(props.onDragPreview)(block.id, s);
+        runOnJS(onDragPreview)(blockId, s);
         runOnJS(tick)();
       }
     })
     .onEnd(() => {
       if (mode.value === 1) {
-        runOnJS(props.onResizeEnd)(block.id, lastDur.value);
+        runOnJS(onResizeEnd)(blockId, lastDur.value);
       } else {
         // Reduced motion: snap back instantly, no 120ms ease.
         if (reducedMotion) ty.value = 0;
         else ty.value = withTiming(0, { duration: 120 });
-        runOnJS(props.onDragEnd)(block.id, lastSnap.value);
+        runOnJS(onDragEnd)(blockId, lastSnap.value);
       }
     })
     .onFinalize(() => {
-      runOnJS(props.onInteractionEnd)();
-      runOnJS(props.onDragCancel)();
+      runOnJS(onInteractionEnd)();
+      runOnJS(onDragCancel)();
     });
 
   const longPress = Gesture.LongPress()
     .minDuration(500)
     .onStart(() => {
-      runOnJS(props.onLongPressBlock)(block.id);
+      runOnJS(onLongPressBlock)(blockId);
     });
 
   const tap = Gesture.Tap().onEnd(() => {
-    runOnJS(props.onTapBlock)(block.id);
+    runOnJS(onTapBlock)(blockId);
   });
 
   const composed = Gesture.Exclusive(longPress, pan, tap);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: ty.value }],
-    opacity: props.dragging ? 0.35 : 1,
+    opacity: draggingSV.value ? 0.35 : 1,
   }));
 
   const category = categoryById(block.categoryId, categories);
   const bg = categoryColorHex[category.color];
   const fg = textColorFor(category.color);
-  const compact = props.height < 44;
+  const compact = height < 44;
 
   return (
     <GestureDetector gesture={composed}>
@@ -147,10 +181,10 @@ export function BlockCard(props: BlockCardProps) {
         style={[
           styles.card,
           {
-            top: props.top,
-            left: props.left,
-            width: props.width,
-            height: props.height,
+            top,
+            left,
+            width,
+            height,
             backgroundColor: bg,
             borderColor: props.selected ? colors.carbon : 'transparent',
           },
