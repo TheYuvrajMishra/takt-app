@@ -106,11 +106,15 @@
   Exclusive would block the Pan until the tap failed at 250ms, so the
   hold-progress ring would not start filling until then.
 - A Pan that sits over tappable content MUST have an activation threshold
-  (`.activeOffsetY([-10, 10])` on the sheet's body/header Pans). A Pan
-  with none activates on the tap's finger jitter and claims the touch,
-  so every button under it stops responding — that is how every button
-  inside a sheet went dead (2026-11-10). A tap moves <10dp and falls
-  through to the button; a real drag moves more.
+  on BOTH axes (`.minDistance(10)` on the sheet's body/header Pans and the
+  dock closePan). A Pan with none activates on the tap's finger jitter
+  and claims the touch, so every button under it stops responding — that
+  is how every button inside a sheet went dead (2026-11-10). And a
+  threshold on ONE axis only is not enough: the v23 fix used
+  activeOffsetY, which guards Y, but a diagonal tap jitter with a
+  horizontal component still activated the Pan, so the update sheet and
+  the calendar create sheet stayed dead. A tap moves <10dp in any
+  direction and falls through to the button; a real drag moves more.
 - Radial subcategory flow (Today and Calendar), ONE continuous touch —
   hold (300ms) → subcategories bloom → slide the finger to one → hover it
   300ms (`RADIAL_HOVER_MS`) and the drag arms (ghost follows the finger)
