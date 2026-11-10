@@ -1,9 +1,13 @@
 // Regression guards for "nothing clickable in any drawer" (2026-11-10).
-// Two causes:
-// 1. The Sheet's body/header Pans had NO activation threshold, so they
-//    activated on the tap's finger jitter and claimed the touch — every
-//    button inside a sheet stopped responding.
-// 2. A dock pill had NO tap action at all (hold-only by design), so a
+// Two causes, two rounds:
+// 1. (v23) The Sheet's body/header Pans had NO activation threshold, so
+//    they activated on the tap's finger jitter and claimed the touch —
+//    every button inside a sheet stopped responding.
+// 2. (v25) The v23 fix used only activeOffsetY, which guards the Y axis:
+//    a diagonal tap jitter with a horizontal component still activated
+//    the Pan, so the buttons in the update sheet and the calendar create
+//    sheet stayed dead. The threshold must cover BOTH axes (minDistance).
+// 3. A dock pill had NO tap action at all (hold-only by design), so a
 //    tap on a pill did nothing and the drawer read as dead.
 import { describe, expect, it } from 'vitest';
 
@@ -17,11 +21,16 @@ import TODAY_SRC from '../../app/(tabs)/index.tsx?raw';
 import CAL_SRC from '../../app/(tabs)/calendar.tsx?raw';
 
 describe('sheet drags do not swallow taps', () => {
-  it('bodyPan and headerPan need an activation threshold (taps move <10dp)', () => {
-    expect(SHEET_SRC).toContain('.activeOffsetY([-10, 10])');
-    // Both Pans carry it.
-    const hits = SHEET_SRC.match(/\.activeOffsetY\(\[-10, 10\]\)/g) ?? [];
+  it('bodyPan and headerPan need a BOTH-axes threshold (minDistance), not a Y-only one', () => {
+    const hits = SHEET_SRC.match(/\.minDistance\(10\)/g) ?? [];
     expect(hits.length).toBeGreaterThanOrEqual(2);
+    // No Y-only threshold left on the sheet Pans: activeOffsetY alone
+    // leaves the X axis open to a diagonal tap jitter.
+    expect(SHEET_SRC).not.toContain('.activeOffsetY([-10, 10])');
+  });
+
+  it('the dock closePan is guarded on both axes too', () => {
+    expect(DOCK_SRC).toContain('.minDistance(10)');
   });
 });
 

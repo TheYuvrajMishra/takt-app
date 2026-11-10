@@ -166,7 +166,11 @@ export function Dock({
   // Swipe down on the drawer closes it. It runs simultaneous with the
   // node Pans (a swipe starting on a pill would otherwise be stolen by
   // the node's Pan) but only collapses when no drag or radial is active.
+  // minDistance guards BOTH axes: activeOffsetY alone left the X axis
+  // open, so a diagonal tap jitter could activate it and steal the tap
+  // from a pill (same gap as the sheet Pans, 2026-11-10).
   const closePan = Gesture.Pan()
+    .minDistance(10)
     .activeOffsetY(16)
     .onEnd((e) => {
       if (expandProgress.value < 0.5) return;

@@ -125,9 +125,14 @@ export function Sheet({ visible, onClose, title, scopeLabel, snapPoints, childre
 
   // The header drag needs a threshold: without one the Pan activates on
   // the finger's first jitter and swallows taps on anything in the
-  // header. A tap moves <10dp; a deliberate drag moves more.
+  // header. It must be minDistance (BOTH axes): the v23 fix used only
+  // activeOffsetY, which guards the Y axis — a diagonal tap jitter with
+  // a horizontal component still activated the Pan, so the buttons in
+  // the update sheet and the calendar create sheet stayed dead (reported
+  // again 2026-11-10). A tap moves <10dp in any direction; a deliberate
+  // drag moves more.
   const headerPan = Gesture.Pan()
-    .activeOffsetY([-10, 10])
+    .minDistance(10)
     .onUpdate((e) => {
       translateY.value = Math.max(0, e.translationY);
     })
@@ -136,13 +141,14 @@ export function Sheet({ visible, onClose, title, scopeLabel, snapPoints, childre
     });
 
   // Body drag coexists with the inner ScrollView: it only moves the sheet
-  // while the scroll is pinned at the top. It MUST have an activation
-  // threshold: a Pan with none activates on the tap's finger jitter and
-  // claims the touch, so every button inside the sheet stops responding
-  // (reported 2026-11-10: nothing clickable in any drawer). A tap moves
-  // <10dp, so it falls through to the button; a real drag moves more.
+  // while the scroll is pinned at the top. It MUST have a minDistance
+  // threshold on BOTH axes (same Y-only gap as the header Pan above):
+  // a Pan with no threshold, or a threshold on one axis only, activates
+  // on the tap's finger jitter and claims the touch, so every button
+  // inside the sheet stops responding. A tap moves <10dp, so it falls
+  // through to the button; a real drag moves more.
   const bodyPan = Gesture.Pan()
-    .activeOffsetY([-10, 10])
+    .minDistance(10)
     .simultaneousWithExternalGesture(scrollViewRef)
     .onUpdate((e) => {
       if (scrollY.value <= 0) {
