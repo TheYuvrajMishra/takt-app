@@ -32,7 +32,7 @@ describe('worklet-called helpers', () => {
   });
 
   it('clamp is a worklet (calendar pinch onUpdate calls it)', () => {
-    expect(CALENDAR_SRC).toContain('clamp(pinchBaseH.value');
+    expect(CALENDAR_SRC).toContain('clamp(baseH.value');
     const body = functionBody(CALENDAR_SRC, 'function clamp(');
     expect(body).toContain("'worklet'");
   });

@@ -11,14 +11,12 @@
 - Font: Inter Tight — Regular 400, Medium 500, SemiBold 600 only. Headlines big + confident, percentages oversized light-weight numerals.
 - Hairlines: carbon at 10–15% opacity only. No grey token, no slate, no blue-black, no grey text.
 - Film grain: Skia noise or tiled PNG at ~4–6% opacity over whole app.
-- Paper texture: three different kinds, one per surface type
-  (`PaperTexture` `kind`): cards and blocks get the FINE grain, buttons
-  and dock nodes the COARSE chunky grain, sheets and drawers the LINEN
-  weave. They must read as different materials, not the same speckle
-  everywhere. Realistic shadows are ONE soft shadow per surface
-  (`shadows.card` / `shadows.soft` / `shadows.lifted`): the earlier two
-  nested shadows drew a dark line inside the card edge and read as a
-  glitch, and the nesting shrink-wrapped full-width cards to half width.
+- Paper texture: cards carry the grain tile inside them (`PaperTexture`,
+  5% on `Card`, 4% on calendar blocks) — a subtle paper feel, not a
+  pattern. Realistic shadows are LAYERED (`shadows` in tokens): a large
+  soft ambient + a tight contact shadow, nested two views deep (`Card`
+  does this; small surfaces take the single `soft` shadow, lifted ones
+  `lifted`). Carbon-tinted, never grey.
 - Hatch: 45° diagonal stripes for "unfilled"/upcoming segments and hatched card accents.
 - Icons: custom SVG, 1.75px stroke, rounded caps, carbon stroke on color fill.
 - NO emoji anywhere (UI, notifications, copy).
@@ -82,10 +80,9 @@
   ring's position is explicit constants, never `top: '50%'` (that resolves
   against the content-box height and sat the ring 6dp too high).
 - The dock is INVISIBLE until called for — there is no collapsed strip.
-  Swipe up anywhere on the navbar (or on the small up-arrow bobbing
-  above it, or tap the arrow) opens a drawer of ALL chips
-  (usage-ordered, most important at both ends), CENTRE-ALIGNED — every
-  wrapped row is centred, not left-flushed. The drawer is transparent
+  Swipe up anywhere on the navbar (or tap the small up-arrow bobbing
+  above it, Today + Calendar only) opens a drawer of ALL chips
+  (usage-ordered, most important at both ends). The drawer is transparent
   (no solid panel over the content), its pills float on paper chips, and
   it sits 8dp above the navbar (`DRAWER_TO_NAV_GAP`). Swipe down on the
   drawer or tap outside closes it. The drawer's height is driven by the
@@ -123,18 +120,6 @@
   edge zones resize, but the lines cluttered tiny blocks.
 - Blocks carry a subtle paper grain (`PaperTexture`, 4%) and a soft resting
   shadow that deepens while lifted (`shadows.soft` → `shadows.lifted`).
-- Pinch zoom is SMOOTH: the pinch writes a shared value (`hourHeightSV`)
-  and the grid's layout reads it on the UI thread (hour-row heights,
-  block tops/heights, now-line, container height) — NO React state
-  update per frame, NO rounding during the gesture. The old code called
-  setHourHeight every frame and re-rendered the whole calendar, which
-  is what made the zoom step and lag. The state commits only on pinch
-  end (commitZoom, rounded to the nearest even number, persisted).
-- Opening the calendar focuses on NOW: on tab focus it scrolls so the
-  current time sits ~1.5h below the top (only when today is the anchor).
-  The old mount-only effect fired while the tab was inactive (no layout
-  yet), so it opened at 00:00, and it used a hardcoded 64 for the hour
-  height, so a pinched zoom scrolled to the wrong place.
 - Gesture composition law (learned 2026-11-10 — drag/resize were dead on
   device): a LongPress and a manual-activation Pan MUST be
   `Gesture.Simultaneous(hold, pan)`, with the tap `Exclusive` against the
@@ -187,19 +172,3 @@
   sound is deleted + recreated with the alarm on init — only that case
   migrates, so a channel that already has a custom sound, or one the
   user silenced, is left alone. Guarded by `nudge.test.ts`.
-
-## Today hero
-- Left-aligned, on a butter card: TODAY + a date pill ("Tue, 10 Nov")
-  on one row, "Discipline so far", the oversized score, an "X h Y min
-  of Z h" line (completed vs planned minutes), then the mini timeline.
-  There is NO separate greeting / clock / date text above the card —
-  the timing lives in the card.
-- Mini timeline (`MiniTimeline`): one horizontal bar from the first
-  block's start to the last block's end, a colour-coded segment per
-  block (category icon inside when it is wide enough), the free gaps
-  left as empty track so the user sees where they are free. A red
-  marker shows now: a pill with the current time above the bar, a
-  line through it, a dot on it. The red is the only red in the app.
-- Dropping a category tints ONLY the Now section (and Done). Next up
-  and Left never tint — the drop creates in the earliest empty slot
-  wherever it lands, so tinting those two read as a false promise.
