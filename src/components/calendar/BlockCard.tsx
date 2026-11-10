@@ -235,7 +235,14 @@ export function BlockCard(props: BlockCardProps) {
     runOnJS(onTapBlock)(blockId);
   });
 
-  const composed = Gesture.Exclusive(hold, pan, tap);
+  // Composition (fixed 2026-11-10 — drag/resize were dead on device):
+  // the hold and the pan MUST be Simultaneous. With the old
+  // Exclusive(hold, pan, tap), the LongPress winning at 300ms cancelled
+  // the Pan, so onTouchesMove never ran and the block never moved. The
+  // Pan is manualActivation, so it only claims the touch after the hold
+  // arms it; a quick swipe still scrolls the grid. The tap sits in
+  // Exclusive against the pair, so a hold never also fires the tap.
+  const composed = Gesture.Exclusive(Gesture.Simultaneous(hold, pan), tap);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: ty.value }, { scale: 1 + 0.03 * lift.value }],

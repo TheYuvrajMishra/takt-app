@@ -1039,6 +1039,16 @@ export default function CalendarScreen() {
   );
 
   // ---- gestures: pinch zoom + two-finger day swipe -----------------------
+  // The grid scrolls inside a native ScrollView. Without the native
+  // gesture in the composition, the scroll view claims two-finger touches
+  // for itself and the pinch never fires (reported on device 2026-11-10:
+  // zoom did nothing). The native gesture lets the pinch, the two-finger
+  // swipe and the native scroll run simultaneously: one finger scrolls,
+  // two fingers pinch/swipe days. (Gesture.Native is deprecated in favour
+  // of the v3 useNativeGesture hook, but that hook's type does not compose
+  // with the v2 Gesture.Simultaneous used by this file and the rest of
+  // the app; the deprecated call still works in the installed version.)
+  const nativeScroll = Gesture.Native();
   const pinch = Gesture.Pinch()
     .onBegin(() => {
       baseH.value = hourHeightRef.current;
@@ -1064,7 +1074,7 @@ export default function CalendarScreen() {
       else if (e.translationX > 60) runOnJS(step)(-1);
     });
 
-  const outerGestures = Gesture.Simultaneous(pinch, twoFinger);
+  const outerGestures = Gesture.Simultaneous(pinch, twoFinger, nativeScroll);
 
   const backgroundLongPress = Gesture.LongPress()
     .minDuration(450)

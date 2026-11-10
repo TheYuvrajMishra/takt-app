@@ -1,18 +1,20 @@
 // Takt — Dock. Swipe-up expandable dock of category chips.
 //
-// Collapsed: a fixed, non-scrolling row of the 5-6 most-used chips
+// Collapsed: a fixed, non-scrolling row of the 3–4 most-used chips
 // (reordered by usage, most important at both ends) with a drag handle
-// above it. Swipe up on the handle (or tap it) expands into a grid of
-// ALL chips; swipe down on the handle or tap outside collapses.
+// above it. The collapsed container is transparent — no solid band over
+// the content below. Swipe up on the handle (or tap it) expands into a
+// drawer panel with ALL chips; swipe down on the handle or tap outside
+// collapses.
 //
 // Selection is press-and-hold ONLY (HOLD_MS = 300): a tap or a swipe
 // never selects or creates anything. While holding, the chip scales to
 // 0.96 and a thin ring fills around its icon over the hold time; a light
 // haptic fires at the moment of activation. Moving more than
 // HOLD_CANCEL_PX before the hold completes cancels it (treated as a
-// scroll). After activation the chip can be dragged onto the timeline
-// (Calendar) — or, where the parent provides onLongPress (Today), the
-// hold opens the radial subcategory menu instead.
+// scroll). The hold closes the drawer first, then: a category with
+// subcategories opens the radial menu (Today), anything else starts a
+// drag onto the timeline (Calendar) or the sections (Today).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ViewStyle } from 'react-native';
 import { Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
@@ -32,6 +34,14 @@ import { colors, fonts, hairline, radii } from '../theme/tokens';
 import { DECEL, HOLD_CANCEL_PX, HOLD_MS, useAppReducedMotion } from '../theme/motion';
 import { CategoryIcon } from './CategoryIcon';
 import type { Category } from '../types';
+import {
+  collapsedCountForWidth,
+  orderDockCategories,
+  RING_CENTER_X,
+  RING_GEOMETRY,
+  RING_ICON_CENTER_X,
+  topDockCategories,
+} from './dockHelpers';
 import { useDockBottom, useDockExpandedState, useDockHeightReporter } from './layout';
 
 export interface DockAnchor {
@@ -45,35 +55,14 @@ export interface DockProps {
   onLongPress?: (category: Category, anchor: DockAnchor) => void;
   /** Drag released: category + screen coordinates of the drop. */
   onDrop?: (category: Category, x: number, y: number) => void;
+  /** Finger position while a node is being dragged (drives drop-target highlight). */
+  onDragMove?: (x: number, y: number) => void;
+  /** A drag that was armed but ended without a drop (interrupted gesture). */
+  onDragAbort?: () => void;
   /** "+" customize button. */
   onCustomize?: () => void;
   /** Positioning of the dock root (the root is absolute-fill, pointerEvents box-none). */
   style?: ViewStyle;
-}
-
-/**
- * Usage ordering: most-used categories sit at both ends, least-used in the
- * middle. Built inside-out: start from the least-used item in the middle and
- * wrap increasingly-used items around it, alternating sides.
- */
-export function orderDockCategories(categories: Category[]): Category[] {
-  const ascending = [...categories].sort(
-    (a, b) => (a.usageCount ?? 0) - (b.usageCount ?? 0),
-  );
-  const out: Category[] = [];
-  ascending.forEach((cat, i) => {
-    if (i % 2 === 0) out.unshift(cat);
-    else out.push(cat);
-  });
-  return out;
-}
-
-/** The 5-6 most-used categories, ordered most-important at both ends. */
-export function topDockCategories(categories: Category[], max: number): Category[] {
-  const top = [...categories]
-    .sort((a, b) => (b.usageCount ?? 0) - (a.usageCount ?? 0))
-    .slice(0, max);
-  return orderDockCategories(top);
 }
 
 function lightHaptic(): void {
@@ -82,15 +71,16 @@ function lightHaptic(): void {
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
-export function Dock({ categories, onLongPress, onDrop, onCustomize, style }: DockProps) {
+export function Dock({ categories, onLongPress, onDrop, onDragMove, onDragAbort, onCustomize, style }: DockProps) {
   const { width } = useWindowDimensions();
   const dockBottom = useDockBottom();
   const reportDockHeight = useDockHeightReporter();
   const [expanded, setDockExpanded] = useDockExpandedState();
   const reducedMotion = useAppReducedMotion();
 
-  // Most-used chips for the collapsed row: 6 on wide screens, 5 on narrow.
-  const maxCollapsed = width >= 400 ? 6 : 5;
+  // Collapsed row: 3–4 most-used chips. Everything else lives in the
+  // swipe-up drawer.
+  const maxCollapsed = collapsedCountForWidth(width);
   const collapsedCats = useMemo(
     () => topDockCategories(categories, maxCollapsed),
     [categories, maxCollapsed],
@@ -133,18 +123,27 @@ export function Dock({ categories, onLongPress, onDrop, onCustomize, style }: Do
 
   const animateExpand = useCallback(
     (toExpanded: boolean) => {
+      // The effect below drives expandProgress from the context state, so
+      // any caller (this dock's handle, or a parent collapsing the drawer
+      // when a drag starts) animates the same way.
       setDockExpanded(toExpanded);
-      if (reducedMotion) {
-        expandProgress.value = toExpanded ? 1 : 0;
-        return;
-      }
-      expandProgress.value = withTiming(toExpanded ? 1 : 0, {
-        duration: 300,
-        easing: DECEL,
-      });
     },
-    [reducedMotion, expandProgress, setDockExpanded],
+    [setDockExpanded],
   );
+
+  // Single source of truth: expandProgress follows the context state.
+  // (Before this, only animateExpand moved the progress — a parent that
+  // collapsed the drawer via the context left the drawer visually open.)
+  useEffect(() => {
+    if (reducedMotion) {
+      expandProgress.value = expanded ? 1 : 0;
+      return;
+    }
+    expandProgress.value = withTiming(expanded ? 1 : 0, {
+      duration: 300,
+      easing: DECEL,
+    });
+  }, [expanded, reducedMotion, expandProgress]);
 
   // Swipe up on the handle expands, swipe down collapses; tap toggles.
   const handlePan = Gesture.Pan()
@@ -174,6 +173,10 @@ export function Dock({ categories, onLongPress, onDrop, onCustomize, style }: Do
   const gridStyle = useAnimatedStyle(() => ({
     opacity: expandProgress.value,
     transform: [{ translateY: 16 * (1 - expandProgress.value) }],
+  }));
+
+  const panelStyle = useAnimatedStyle(() => ({
+    opacity: expandProgress.value,
   }));
 
   const ghostStyle = useAnimatedStyle(() => ({
@@ -210,6 +213,11 @@ export function Dock({ categories, onLongPress, onDrop, onCustomize, style }: Do
 
       <View style={[styles.dock, { bottom: dockBottom }]} pointerEvents="box-none">
         <Animated.View style={[styles.container, containerStyle]} pointerEvents="box-none">
+          {/* Drawer panel: only visible when expanded. Collapsed, the
+              container is transparent — the solid band used to cover the
+              content underneath it. */}
+          <Animated.View style={[styles.drawerPanel, panelStyle]} pointerEvents="none" />
+
           <GestureDetector gesture={handleGesture}>
             <View style={styles.handleWrap} accessible accessibilityRole="button" accessibilityLabel={expanded ? 'Collapse dock' : 'Expand dock'}>
               <View style={styles.handle} />
@@ -233,7 +241,10 @@ export function Dock({ categories, onLongPress, onDrop, onCustomize, style }: Do
                   onDragBegin={beginDrag}
                   onDragEnd={endDrag}
                   onDragCancel={cancelDrag}
+                  onDragMove={onDragMove}
+                  onDragAbort={onDragAbort}
                   onLongPress={onLongPress}
+                  collapseDrawer={() => animateExpand(false)}
                 />
               ))}
               {onCustomize ? (
@@ -266,7 +277,10 @@ export function Dock({ categories, onLongPress, onDrop, onCustomize, style }: Do
                   onDragBegin={beginDrag}
                   onDragEnd={endDrag}
                   onDragCancel={cancelDrag}
+                  onDragMove={onDragMove}
+                  onDragAbort={onDragAbort}
                   onLongPress={onLongPress}
+                  collapseDrawer={() => animateExpand(false)}
                 />
               ))}
               {onCustomize ? (
@@ -306,10 +320,14 @@ interface DockNodeProps {
   onDragBegin: (category: Category, index: number, x: number, y: number) => void;
   onDragEnd: (category: Category, x: number, y: number) => void;
   onDragCancel: () => void;
+  onDragMove?: (x: number, y: number) => void;
+  onDragAbort?: () => void;
   onLongPress?: (category: Category, anchor: DockAnchor) => void;
+  /** Close the expanded drawer (called when a hold starts a drag). */
+  collapseDrawer: () => void;
 }
 
-const RING_R = 16;
+const RING_R = RING_GEOMETRY.ringRadius;
 const RING_C = 2 * Math.PI * RING_R;
 
 function DockNode({
@@ -321,22 +339,32 @@ function DockNode({
   onDragBegin,
   onDragEnd,
   onDragCancel,
+  onDragMove,
+  onDragAbort,
   onLongPress,
+  collapseDrawer,
 }: DockNodeProps) {
   const reducedMotion = useAppReducedMotion();
   // Hold progress 0..1 (fills over HOLD_MS). Shared so the ring and the
   // chip scale animate on the UI thread.
   const holdProgress = useSharedValue(0);
+  // True once the Pan's onEnd ran for this touch: onFinalize must not
+  // report an abort after a normal drop.
+  const endedNormally = useSharedValue(false);
 
   // What the hold activates, decided on the JS thread (worklets must never
   // branch on or call a captured function directly — see BlockCard).
+  // The drawer closes first, whatever the hold becomes: a drag starts
+  // from a clear screen, and the radial (below) never sits on top of it.
   const activateHold = useCallback(
     (cat: Category, idx: number, x: number, y: number) => {
       lightHaptic();
-      if (onLongPress) onLongPress(cat, { x, y });
+      collapseDrawer();
+      const hasSubs = (cat.subcategories?.length ?? 0) > 0;
+      if (onLongPress && hasSubs) onLongPress(cat, { x, y });
       else onDragBegin(cat, idx, x, y);
     },
-    [onLongPress, onDragBegin],
+    [onLongPress, onDragBegin, collapseDrawer],
   );
 
   // Arm the drag (or open the radial) once the hold completes. The long
@@ -350,6 +378,7 @@ function DockNode({
 
   const pan = Gesture.Pan()
     .onTouchesDown(() => {
+      endedNormally.value = false;
       // Start the hold-progress cue the instant the finger lands.
       if (reducedMotion) holdProgress.value = 1;
       else holdProgress.value = withTiming(1, { duration: HOLD_MS, easing: DECEL });
@@ -364,14 +393,21 @@ function DockNode({
       if (dragIndex.value === index) {
         dragX.value = e.absoluteX;
         dragY.value = e.absoluteY;
+        if (onDragMove) runOnJS(onDragMove)(e.absoluteX, e.absoluteY);
       }
     })
     .onEnd((e) => {
       if (dragIndex.value === index) {
+        endedNormally.value = true;
         runOnJS(onDragEnd)(category, e.absoluteX, e.absoluteY);
       }
     })
     .onFinalize(() => {
+      if (dragIndex.value === index && !endedNormally.value) {
+        // Armed drag interrupted before a release: tell the parent so it
+        // can clear its drop highlight.
+        if (onDragAbort) runOnJS(onDragAbort)();
+      }
       if (dragIndex.value !== index) {
         holdProgress.value = withTiming(0, { duration: 100, easing: DECEL });
       }
@@ -404,10 +440,10 @@ function DockNode({
     <GestureDetector gesture={gesture}>
       <Animated.View style={[styles.node, nodeStyle]}>
         <Animated.View style={[styles.ring, ringStyle]} pointerEvents="none">
-          <Svg width={36} height={36}>
+          <Svg width={RING_GEOMETRY.ringSize} height={RING_GEOMETRY.ringSize}>
             <Circle
-              cx={18}
-              cy={18}
+              cx={RING_GEOMETRY.ringSize / 2}
+              cy={RING_GEOMETRY.ringSize / 2}
               r={RING_R}
               fill="none"
               stroke={colors.carbon}
@@ -415,8 +451,8 @@ function DockNode({
               strokeWidth={2}
             />
             <AnimatedCircle
-              cx={18}
-              cy={18}
+              cx={RING_GEOMETRY.ringSize / 2}
+              cy={RING_GEOMETRY.ringSize / 2}
               r={RING_R}
               fill="none"
               stroke={colors.carbon}
@@ -424,7 +460,7 @@ function DockNode({
               strokeLinecap="round"
               strokeDasharray={RING_C}
               animatedProps={ringProps}
-              transform={`rotate(-90 18 18)`}
+              transform={`rotate(-90 ${RING_GEOMETRY.ringSize / 2} ${RING_GEOMETRY.ringSize / 2})`}
             />
           </Svg>
         </Animated.View>
@@ -449,10 +485,22 @@ const styles = StyleSheet.create({
     position: 'absolute', left: 0, right: 0,
   },
   container: {
-    backgroundColor: colors.cloud,
-    borderTopWidth: 1,
-    borderTopColor: hairline,
     overflow: 'hidden',
+  },
+  drawerPanel: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: colors.paper,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    shadowColor: colors.carbon,
+    shadowOffset: { width: 0, height: -8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 24,
+    elevation: 8,
   },
   handleWrap: {
     alignItems: 'center',
@@ -509,11 +557,11 @@ const styles = StyleSheet.create({
   },
   ring: {
     position: 'absolute',
-    left: 1,
+    left: RING_GEOMETRY.ringLeft,
     top: '50%',
-    marginTop: -18,
-    width: 36,
-    height: 36,
+    marginTop: -RING_GEOMETRY.ringSize / 2,
+    width: RING_GEOMETRY.ringSize,
+    height: RING_GEOMETRY.ringSize,
   },
   label: { fontFamily: fonts.medium, fontSize: 14, color: colors.carbon, flexShrink: 1 },
   customize: {

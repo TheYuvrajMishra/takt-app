@@ -28,13 +28,17 @@ export interface RadialMenuProps {
   onCreate: (category: Category, subcategoryId?: string) => void;
   onAttach: (category: Category, subcategoryId?: string) => void;
   onDismiss: () => void;
+  /** Finger position while dragging after an attach (drives the ghost + section highlight). */
+  onDragMove?: (x: number, y: number) => void;
+  /** Release after an attach: drop the armed category + subcategory in. */
+  onDrop?: (category: Category, subcategoryId: string | undefined, x: number, y: number) => void;
 }
 
 const RADIUS = 112;
 const ITEM_W = 104;
 const ATTACH_HOLD_MS = 450;
 
-export function RadialMenu({ visible, category, anchor, onCreate, onAttach, onDismiss }: RadialMenuProps) {
+export function RadialMenu({ visible, category, anchor, onCreate, onAttach, onDismiss, onDragMove, onDrop }: RadialMenuProps) {
   const { width, height } = useWindowDimensions();
   const subs = category.subcategories ?? [];
   const hovered = useSharedValue(-1);
@@ -44,6 +48,15 @@ export function RadialMenu({ visible, category, anchor, onCreate, onAttach, onDi
   const onDismissRef = useRef(onDismiss);
   onAttachRef.current = onAttach;
   onDismissRef.current = onDismiss;
+  // Attach/drag mode: the finger dwelled on a subcategory (ATTACH_HOLD_MS).
+  // The drawer closes and the drag arms — the radial's visuals hide but
+  // its Pan stays mounted so the drag keeps tracking until release.
+  // A shared value (not just state) so the worklet callbacks can see it.
+  const attachedSV = useSharedValue(false);
+  const [attached, setAttached] = useState(false);
+  const attachedSubRef = useRef<string | undefined>(undefined);
+  // Shared (not a ref): read from the Pan's onFinalize worklet.
+  const droppedSV = useSharedValue(false);
 
   // Clamp the bloom center so the circle stays on screen.
   const cx = Math.min(Math.max(anchor.x, 96), width - 96);
@@ -56,6 +69,10 @@ export function RadialMenu({ visible, category, anchor, onCreate, onAttach, onDi
       hovered.value = -1;
       setHoveredIdx(-1);
       hoveredRef.current = -1;
+      attachedSV.value = false;
+      setAttached(false);
+      attachedSubRef.current = undefined;
+      droppedSV.value = false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
@@ -68,8 +85,14 @@ export function RadialMenu({ visible, category, anchor, onCreate, onAttach, onDi
       const sub = subs[hoveredIdx];
       const timer = setTimeout(() => {
         if (hoveredRef.current === hoveredIdx) {
+          // Dwell: arm the drag instead of creating immediately. The
+          // parent closes the drawer and shows the drag ghost; this
+          // radial hides its visuals but keeps tracking the finger.
+          attachedSV.value = true;
+          attachedSubRef.current = sub?.id;
+          droppedSV.value = false;
+          setAttached(true);
           onAttachRef.current(category, sub?.id);
-          onDismissRef.current();
         }
       }, ATTACH_HOLD_MS);
       return () => clearTimeout(timer);
@@ -95,8 +118,34 @@ export function RadialMenu({ visible, category, anchor, onCreate, onAttach, onDi
     }
   };
 
+  const handleDrop = (x: number, y: number) => {
+    droppedSV.value = true;
+    const subId = attachedSubRef.current;
+    setAttached(false);
+    if (onDrop) onDrop(category, subId, x, y);
+    else onCreate(category, subId);
+  };
+
+  const handleDragMove = (x: number, y: number) => {
+    if (onDragMove) onDragMove(x, y);
+  };
+
+  const cleanupAttach = () => {
+    // Gesture interrupted after an attach (no release): put the menu away.
+    attachedSV.value = false;
+    attachedSubRef.current = undefined;
+    setAttached(false);
+    onDismissRef.current();
+  };
+
   const pan = Gesture.Pan()
     .onUpdate((e) => {
+      if (attachedSV.value) {
+        // Attached drag: the finger is carrying the subcategory to a
+        // drop target — report the position, no more hovering.
+        if (onDragMove) runOnJS(handleDragMove)(e.absoluteX, e.absoluteY);
+        return;
+      }
       const dx = e.absoluteX - cx;
       const dy = e.absoluteY - cy;
       const dist = Math.hypot(dx, dy);
@@ -119,42 +168,53 @@ export function RadialMenu({ visible, category, anchor, onCreate, onAttach, onDi
         runOnJS(handleHoverChange)(idx);
       }
     })
-    .onEnd(() => {
+    .onEnd((e) => {
+      if (attachedSV.value) {
+        runOnJS(handleDrop)(e.absoluteX, e.absoluteY);
+        return;
+      }
       runOnJS(handleRelease)(hovered.value);
     })
     .onFinalize(() => {
       hovered.value = -1;
+      if (attachedSV.value && !droppedSV.value) {
+        runOnJS(cleanupAttach)();
+      }
     });
 
   if (!visible) return null;
 
   return (
     <GestureDetector gesture={pan}>
-      <View style={styles.root}>
-        {/* Center: the held node. */}
-        <View style={[styles.center, { left: cx - 30, top: cy - 30 }]}>
-          <CategoryIcon icon={category.icon} color={category.color} size={34} />
-        </View>
-        <Text style={[styles.centerLabel, { left: cx - 60, top: cy + 40 }]} numberOfLines={1}>
-          {category.name}
-        </Text>
+      <View style={[styles.root, attached && styles.rootAttached]}>
+        {attached ? null : (
+          <>
+            {/* Center: the held node. */}
+            <View style={[styles.center, { left: cx - 30, top: cy - 30 }]}>
+              <CategoryIcon icon={category.icon} color={category.color} size={34} />
+            </View>
+            <Text style={[styles.centerLabel, { left: cx - 60, top: cy + 40 }]} numberOfLines={1}>
+              {category.name}
+            </Text>
 
-        {subs.length === 0 ? (
-          <Text style={[styles.hint, { left: 0, top: cy + 72 }]}>
-            Release to add {category.name}
-          </Text>
-        ) : (
-          subs.map((sub, i) => (
-            <RadialItem
-              key={sub.id}
-              sub={sub}
-              index={i}
-              angle={angles[i] ?? 0}
-              cx={cx}
-              cy={cy}
-              highlighted={hoveredIdx === i}
-            />
-          ))
+            {subs.length === 0 ? (
+              <Text style={[styles.hint, { left: 0, top: cy + 72 }]}>
+                Release to add {category.name}
+              </Text>
+            ) : (
+              subs.map((sub, i) => (
+                <RadialItem
+                  key={sub.id}
+                  sub={sub}
+                  index={i}
+                  angle={angles[i] ?? 0}
+                  cx={cx}
+                  cy={cy}
+                  highlighted={hoveredIdx === i}
+                />
+              ))
+            )}
+          </>
         )}
       </View>
     </GestureDetector>
@@ -215,6 +275,11 @@ const styles = StyleSheet.create({
     position: 'absolute', left: 0, right: 0, top: 0, bottom: 0,
     backgroundColor: 'rgba(10,10,10,0.16)',
     zIndex: 60,
+  },
+  // Attached drag: visuals hidden, Pan still tracking — the background
+  // must go transparent or it dims the sections being dragged over.
+  rootAttached: {
+    backgroundColor: 'transparent',
   },
   center: {
     position: 'absolute',

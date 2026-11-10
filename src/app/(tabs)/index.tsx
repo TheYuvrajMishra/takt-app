@@ -4,7 +4,7 @@
 // Now / Next up / Left / Done sections. Tapping a block opens a sheet whose
 // edits are scoped "Today only". Uses Worker A's real store
 // (src/store/useStore.ts) — no stub: the store landed before this screen.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Text, TextInput } from '../../components/TText';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -28,7 +28,8 @@ import { BlockChip, BLOCK_CHIP_WIDTH } from '../../components/BlockChip';
 import { Sheet } from '../../components/Sheet';
 import { Dock } from '../../components/Dock';
 import type { DockAnchor } from '../../components/Dock';
-import { ScrollScreen } from '../../components/layout';
+import { ScrollScreen, useDockExpandedState } from '../../components/layout';
+import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import { RadialMenu } from '../../components/RadialMenu';
 import { EndOfDaySheet } from '../../components/EndOfDaySheet';
 import { CategoryIcon } from '../../components/CategoryIcon';
@@ -92,6 +93,17 @@ export default function TodayScreen() {
   const stripRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
   const stripWidthRef = useRef(0);
   const summaryShownRef = useRef(false);
+  // Drop-target highlight while a category is being dragged in from the
+  // dock or the radial: the section under the finger tints butter.
+  const [, setDockExpanded] = useDockExpandedState();
+  const [highlightedSection, setHighlightedSection] = useState<string | null>(null);
+  // After the radial's dwell, the drawer is closed and this drag is armed:
+  // the ghost follows the finger until release drops it in.
+  const [radialDrag, setRadialDrag] = useState<{ category: Category; subcategoryId?: string } | null>(null);
+  const sectionLayoutsRef = useRef(new Map<string, { y: number; height: number }>());
+  const scrollYRef = useRef(0);
+  const ghostX = useSharedValue(0);
+  const ghostY = useSharedValue(0);
 
   // Hydrate the store once.
   useEffect(() => {
@@ -202,20 +214,61 @@ export default function TodayScreen() {
   const handleDockDrop = (category: Category) => {
     // Drop anywhere creates in the earliest empty slot from now.
     // (Dropping onto a specific time on the timeline is a later step.)
+    setHighlightedSection(null);
     createInEarliestSlot(category);
   };
+
+  // Finger position while a category is being dragged in (from the dock
+  // or after a radial dwell): move the ghost and tint the section under
+  // the finger. Section layouts are content-relative, so the finger's
+  // page Y is converted with the scroll offset; the ScrollScreen starts
+  // at insets.top + 8 (the root's paddingTop).
+  const handleDragMove = useCallback(
+    (x: number, y: number) => {
+      ghostX.value = x;
+      ghostY.value = y;
+      const contentY = y - (insets.top + 8) + scrollYRef.current;
+      let found: string | null = null;
+      for (const [key, box] of sectionLayoutsRef.current) {
+        if (contentY >= box.y && contentY < box.y + box.height) {
+          found = key;
+          break;
+        }
+      }
+      setHighlightedSection((prev) => (prev === found ? prev : found));
+    },
+    [ghostX, ghostY, insets.top],
+  );
+
+  const clearDragHighlight = useCallback(() => {
+    setHighlightedSection(null);
+  }, []);
 
   const handleRadialCreate = (category: Category, subcategoryId?: string) => {
     setRadial(null);
     createInEarliestSlot(category, subcategoryId);
   };
 
+  // Dwell on a subcategory: the drawer closes automatically and the drag
+  // arms. The radial stays mounted (hidden) tracking the finger; release
+  // drops it in (handleRadialDrop). Nothing is created yet.
   const handleRadialAttach = (category: Category, subcategoryId?: string) => {
-    // Attach/drag-to-a-time is a Calendar gesture; on Today the block is
-    // created in the earliest empty slot instead.
+    setDockExpanded(false);
+    setRadialDrag({ category, subcategoryId });
+  };
+
+  const handleRadialDrop = (category: Category, subcategoryId: string | undefined) => {
     setRadial(null);
+    setRadialDrag(null);
+    setHighlightedSection(null);
     createInEarliestSlot(category, subcategoryId);
   };
+
+  const dismissRadial = useCallback(() => {
+    setRadial(null);
+    setRadialDrag(null);
+    setHighlightedSection(null);
+  }, []);
 
   // --- Sheet actions (all "Today only") -----------------------------------
   // Category / notes edits go through the store's patchBlock, which keeps
@@ -277,11 +330,23 @@ export default function TodayScreen() {
     day: 'numeric',
   });
 
+  const dragGhostStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: ghostX.value - 56 },
+      { translateY: ghostY.value - 28 },
+      { scale: 1.1 },
+    ],
+  }));
+
   return (
     <View style={[styles.root, { paddingTop: insets.top + 8 }]}>
       <ScrollScreen
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
+        scrollEventThrottle={16}
+        onScroll={(e) => {
+          scrollYRef.current = e.nativeEvent.contentOffset.y;
+        }}
       >
         {/* Greeting + live clock */}
         <Text style={styles.greeting}>{greetingFor(now.getHours())}</Text>
@@ -373,7 +438,12 @@ export default function TodayScreen() {
 
         {/* Sections */}
         {nowBlocks.length > 0 ? (
-          <Section title="Now">
+          <Section
+            title="Now"
+            sectionKey="now"
+            highlighted={highlightedSection === 'now'}
+            onLayout={(y, height) => sectionLayoutsRef.current.set('now', { y, height })}
+          >
             {nowBlocks.map((b) => (
               <BlockRow
                 key={b.id}
@@ -387,7 +457,12 @@ export default function TodayScreen() {
         ) : null}
 
         {nextBlock ? (
-          <Section title="Next up">
+          <Section
+            title="Next up"
+            sectionKey="next"
+            highlighted={highlightedSection === 'next'}
+            onLayout={(y, height) => sectionLayoutsRef.current.set('next', { y, height })}
+          >
             <BlockRow
               block={nextBlock}
               category={categoryById.get(nextBlock.categoryId)}
@@ -398,7 +473,12 @@ export default function TodayScreen() {
         ) : null}
 
         {leftBlocks.length > 0 ? (
-          <Section title="Left">
+          <Section
+            title="Left"
+            sectionKey="left"
+            highlighted={highlightedSection === 'left'}
+            onLayout={(y, height) => sectionLayoutsRef.current.set('left', { y, height })}
+          >
             {leftBlocks.map((b) => (
               <BlockRow
                 key={b.id}
@@ -414,6 +494,9 @@ export default function TodayScreen() {
         {doneBlocks.length > 0 ? (
           <Section
             title={`Done (${doneBlocks.length})`}
+            sectionKey="done"
+            highlighted={highlightedSection === 'done'}
+            onLayout={(y, height) => sectionLayoutsRef.current.set('done', { y, height })}
             collapsed={!doneOpen}
             onToggle={() => setDoneOpen((v) => !v)}
           >
@@ -442,6 +525,8 @@ export default function TodayScreen() {
         categories={categories}
         onLongPress={(category, anchor) => setRadial({ category, anchor })}
         onDrop={handleDockDrop}
+        onDragMove={handleDragMove}
+        onDragAbort={clearDragHighlight}
         onCustomize={() => setToastMsg('Dock customization coming soon.')}
       />
       {radial ? (
@@ -451,8 +536,24 @@ export default function TodayScreen() {
           anchor={radial.anchor}
           onCreate={handleRadialCreate}
           onAttach={handleRadialAttach}
-          onDismiss={() => setRadial(null)}
+          onDismiss={dismissRadial}
+          onDragMove={handleDragMove}
+          onDrop={handleRadialDrop}
         />
+      ) : null}
+      {/* Ghost for a radial-armed drag: follows the finger until release. */}
+      {radialDrag ? (
+        <Animated.View style={[styles.dragGhost, dragGhostStyle]} pointerEvents="none">
+          <CategoryIcon
+            icon={radialDrag.category.icon}
+            color={radialDrag.category.color}
+            size={24}
+          />
+          <Text style={styles.dragGhostLabel}>
+            {radialDrag.category.subcategories?.find((s) => s.id === radialDrag.subcategoryId)?.name ??
+              radialDrag.category.name}
+          </Text>
+        </Animated.View>
       ) : null}
 
       {/* Block sheet */}
@@ -568,11 +669,18 @@ function Section({
   children,
   collapsed,
   onToggle,
+  sectionKey,
+  highlighted,
+  onLayout,
 }: {
   title: string;
   children: React.ReactNode;
   collapsed?: boolean;
   onToggle?: () => void;
+  sectionKey?: string;
+  highlighted?: boolean;
+  /** Content-relative layout, reported for drop-target highlighting. */
+  onLayout?: (y: number, height: number) => void;
 }) {
   const head = (
     <View style={styles.sectionHead}>
@@ -583,7 +691,14 @@ function Section({
     </View>
   );
   return (
-    <View style={styles.section}>
+    <View
+      style={[styles.section, highlighted && styles.sectionHighlighted]}
+      onLayout={
+        onLayout
+          ? (e) => onLayout(e.nativeEvent.layout.y, e.nativeEvent.layout.height)
+          : undefined
+      }
+    >
       {onToggle ? (
         <Pressable onPress={onToggle}>{head}</Pressable>
       ) : (
@@ -739,6 +854,30 @@ const styles = StyleSheet.create({
   secondaryText: { fontFamily: fonts.semibold, fontSize: 15, color: colors.carbon },
   strip: { paddingTop: spacing.lg, paddingRight: 4 },
   section: { width: '100%', marginTop: spacing.lg },
+  // Drop-target highlight: the section under a dragged category tints
+  // butter. Background + radius only — no padding/margin change, so the
+  // layout never jumps while dragging.
+  sectionHighlighted: { backgroundColor: colors.butter, borderRadius: radii.cardSm },
+  dragGhost: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: colors.carbon,
+    borderRadius: radii.pill,
+    paddingLeft: 8,
+    paddingRight: 16,
+    paddingVertical: 8,
+    shadowColor: colors.carbon,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 6,
+    zIndex: 70,
+  },
+  dragGhostLabel: { fontFamily: fonts.semibold, fontSize: 15, color: colors.paper },
   sectionHead: {
     flexDirection: 'row',
     alignItems: 'baseline',

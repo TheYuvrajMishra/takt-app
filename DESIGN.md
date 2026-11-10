@@ -62,12 +62,20 @@
 - Selection NEVER comes from a tap or a swipe. It takes a press-and-hold
   of `HOLD_MS = 300` (`src/theme/motion.ts`), cancelled by >8px of movement
   (`HOLD_CANCEL_PX`). While holding, the chip scales to 0.96 and a thin
-  ring fills; a light haptic fires at activation.
-- The dock is a fixed row of the 5–6 most-used chips (usage-ordered, most
-  important at both ends) with a drag handle; swipe up on the dock/handle
-  (or tap the handle) expands it to a grid of all chips. Swipe down or tap
-  outside collapses. Grid chips still hold-to-drag; the radial subcategory
-  menu still opens from a hold.
+  ring fills; a light haptic fires at activation. The ring is centered
+  exactly on the icon (17dp from the node's left edge, 3dp gap — see
+  `RING_GEOMETRY` in `src/components/dockHelpers.ts`, tested).
+- The dock is a fixed row of the 3–4 most-used chips (usage-ordered, most
+  important at both ends) with a drag handle; the collapsed container is
+  transparent (no solid band over the content below). Swipe up on the
+  dock/handle (or tap the handle) expands it into a drawer panel with all
+  chips. Swipe down or tap outside collapses. A hold closes the drawer
+  first, then: a category with subcategories opens the radial menu (Today),
+  anything else starts a drag. While dragging, the section under the
+  finger highlights; on Today the drop creates in the earliest empty slot.
+- Radial subcategory flow (Today): hold a category with subs → options
+  bloom → drag the pointer to highlight one → dwelling 450ms closes the
+  drawer automatically and arms the drag → release drops it in.
 
 ## Calendar blocks (Fix 2)
 - Blocks render adaptively by height (`variantForHeight`): tiny blocks
@@ -80,6 +88,15 @@
   a haptic tick per snap, and ask scope afterwards ("Today only" /
   "From today onwards") with undo. Pinch zoom changes hour height
   48→240dp and is persisted in Settings.
+- Gesture composition law (learned 2026-11-10 — drag/resize were dead on
+  device): a LongPress and a manual-activation Pan MUST be
+  `Gesture.Simultaneous(hold, pan)`, with the tap `Exclusive` against the
+  pair. `Exclusive(hold, pan, tap)` lets the LongPress win at 300ms and
+  cancel the Pan, so the drag never starts. Guarded by
+  `blockCardWorklet.test.ts`.
+- Pinch zoom must compose with the native scroll gesture
+  (`Gesture.Native()` in the `outerGestures` Simultaneous group), or the
+  ScrollView claims two-finger touches and the pinch never fires.
 
 ## Sheets (Fix 5)
 - ONE shared `<Sheet>` for every drawer. It renders

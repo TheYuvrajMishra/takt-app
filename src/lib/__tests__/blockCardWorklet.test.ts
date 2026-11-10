@@ -65,4 +65,14 @@ describe('BlockCard worklet safety', () => {
     expect(SRC).toContain('.minDuration(HOLD_MS)');
     expect(SRC).toContain('.manualActivation(true)');
   });
+
+  it('composes hold + pan as Simultaneous, tap Exclusive against the pair', () => {
+    // Regression (2026-11-10, reported on device): drag and resize did
+    // nothing. The old Exclusive(hold, pan, tap) let the LongPress win at
+    // 300ms and cancel the Pan, so onTouchesMove never ran. The hold and
+    // the Pan must be Simultaneous; the tap sits Exclusive against the
+    // pair so a hold never also fires the tap.
+    expect(SRC).toContain('Gesture.Exclusive(Gesture.Simultaneous(hold, pan), tap)');
+    expect(SRC).not.toContain('Gesture.Exclusive(hold, pan, tap)');
+  });
 });
