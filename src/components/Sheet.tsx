@@ -1,40 +1,27 @@
 // Takt — Sheet. THE one shared bottom sheet for every drawer.
 //
-// Why this exists: a gesture inside an RN Modal only works when the
-// Modal's content is wrapped in GestureHandlerRootView — without it the
-// drag handle silently does nothing on Android (every drawer had a
-// handle you could not drag). This component owns that wrapper, so no
-// drawer ever re-implements it.
-//
-// Behaviour:
-// - Handle + header are draggable (the ONLY drag in the sheet); backdrop
-//   tap and the hardware back button close.
-// - The body is a PLAIN React Native ScrollView with NO gesture on it.
-//   That is deliberate, and it is the fix for the dead-buttons bug:
-//   the body used to be wrapped in a GestureDetector carrying a Pan
-//   (drag down at the top to close). That Pan sat above every button,
-//   and RNGH intercepts touches at the native level for the whole
-//   subtree — two threshold tunings (v23 activeOffsetY, v25 minDistance)
-//   did NOT restore taps. Thresholds assume the Pan cleanly releases a
-//   sub-threshold touch to the responder; it does not. So the Pan is
-//   gone from the body entirely: the buttons are plain Pressables in a
-//   plain ScrollView, and nothing above them can claim the touch.
-//   The trade is that the body no longer drags the sheet down — the
-//   header drag + backdrop + back button close it. Do NOT re-add a Pan
-//   over the body; that is the bug coming back.
+// Why this file looks the way it does (read before touching it):
+// The buttons in every drawer were dead through v23, v25 AND v27.
+// The input (TextInput, native) worked, the buttons (Pressable, JS
+// responder) did not — so the touch reached the sheet, but the JS
+// responder never delivered the tap. The cause was RNGH: first the
+// bodyPan sat above every button (v23/v25 threshold tunings could not
+// restore taps), then the remaining GestureHandlerRootView + headerPan
+// in the Modal still broke Pressables. So this Sheet has NO RNGH at
+// all now: no GestureHandlerRootView, no GestureDetector, no Pan. The
+// body is a plain React Native ScrollView, the buttons are plain
+// Pressables, the backdrop is a plain Pressable. The sheet closes via
+// backdrop tap or the hardware back button ONLY — there is no drag to
+// close. Do NOT re-add RNGH or a Pan to this file; that is the
+// dead-buttons bug coming back. If drag-to-close is ever wanted again,
+// it must be proven on a device that Pressables still fire with it.
 import type { ReactNode } from 'react';
 import { useEffect } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Text } from './TText';
 import { PaperTexture } from './PaperTexture';
-import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
-import Animated, {
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-} from 'react-native-reanimated';
-import { colors, fonts, hairline, radii, spacing } from '../theme/tokens';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import { colors, fonts, radii, spacing } from '../theme/tokens';
 import { DECEL, SHEET_MS, useAppReducedMotion } from '../theme/motion';
 
 export interface SheetProps {
@@ -43,24 +30,15 @@ export interface SheetProps {
   title?: string;
   /** Small scope line under the title, e.g. "Today only". */
   scopeLabel?: string;
-  /** Snap fractions of the sheet height, e.g. [0.5, 1]. Default: full only. */
-  snapPoints?: number[];
   children: ReactNode;
 }
 
-/** Close once the sheet is dragged past this fraction of its height. */
-const CLOSE_FRACTION = 0.3;
-/** Or flung down faster than this (px/s). */
-const CLOSE_VELOCITY = 800;
-
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
-export function Sheet({ visible, onClose, title, scopeLabel, snapPoints, children }: SheetProps) {
+export function Sheet({ visible, onClose, title, scopeLabel, children }: SheetProps) {
   const translateY = useSharedValue(0);
   const sheetH = useSharedValue(0);
   const reducedMotion = useAppReducedMotion();
-  const close = onClose;
-  const snaps = snapPoints;
 
   // Slide up on open; reset when closed.
   useEffect(() => {
@@ -75,64 +53,6 @@ export function Sheet({ visible, onClose, title, scopeLabel, snapPoints, childre
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
-  const settle = (y: number, velocityY: number) => {
-    'worklet';
-    const h = sheetH.value;
-    if (h <= 0) return;
-    const pastThreshold = y > CLOSE_FRACTION * h;
-    const flung = velocityY > CLOSE_VELOCITY;
-    if (pastThreshold || flung) {
-      if (reducedMotion) {
-        translateY.value = h;
-        runOnJS(close)();
-        return;
-      }
-      translateY.value = withTiming(
-        h,
-        { duration: SHEET_MS, easing: DECEL },
-        (finished) => {
-          if (finished) runOnJS(close)();
-        },
-      );
-      return;
-    }
-    // Settle back — to the nearest snap point when given, else fully open.
-    let target = 0;
-    if (snaps && snaps.length > 0) {
-      const candidates = snaps.map((f) => h * (1 - f));
-      candidates.push(0);
-      let best = 0;
-      let bestDist = Infinity;
-      for (const c of candidates) {
-        const d = Math.abs(y - c);
-        if (d < bestDist) {
-          bestDist = d;
-          best = c;
-        }
-      }
-      target = best;
-    }
-    if (reducedMotion) {
-      translateY.value = target;
-      return;
-    }
-    translateY.value = withTiming(target, { duration: SHEET_MS, easing: DECEL });
-  };
-
-  // The header drag is the sheet's only drag. It needs a threshold:
-  // without one the Pan activates on the finger's first jitter. It must
-  // be minDistance (BOTH axes): a Y-only threshold leaves the X axis
-  // open to a diagonal tap jitter. The header holds no buttons, so this
-  // Pan can never swallow one — that is why it is allowed to stay.
-  const headerPan = Gesture.Pan()
-    .minDistance(10)
-    .onUpdate((e) => {
-      translateY.value = Math.max(0, e.translationY);
-    })
-    .onEnd((e) => {
-      settle(e.translationY, e.velocityY);
-    });
-
   const sheetStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: translateY.value }],
   }));
@@ -145,7 +65,7 @@ export function Sheet({ visible, onClose, title, scopeLabel, snapPoints, childre
 
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
-      <GestureHandlerRootView style={styles.root}>
+      <View style={styles.root}>
         <AnimatedPressable
           style={[styles.backdrop, backdropStyle]}
           onPress={onClose}
@@ -157,16 +77,12 @@ export function Sheet({ visible, onClose, title, scopeLabel, snapPoints, childre
             sheetH.value = e.nativeEvent.layout.height;
           }}
         >
-          <GestureDetector gesture={headerPan}>
-            <View style={styles.header}>
-              <View style={styles.handle} />
-              {title ? <Text style={styles.title}>{title}</Text> : null}
-              {scopeLabel ? <Text style={styles.scope}>{scopeLabel}</Text> : null}
-            </View>
-          </GestureDetector>
-          {/* The body is a plain ScrollView with NO GestureDetector on
-              it — see the header comment. Any Pan here is the dead-
-              buttons bug coming back. */}
+          <View style={styles.header}>
+            <View style={styles.handle} />
+            {title ? <Text style={styles.title}>{title}</Text> : null}
+            {scopeLabel ? <Text style={styles.scope}>{scopeLabel}</Text> : null}
+          </View>
+          {/* Plain ScrollView, no gesture on it — see the header comment. */}
           <ScrollView
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.content}
@@ -177,7 +93,7 @@ export function Sheet({ visible, onClose, title, scopeLabel, snapPoints, childre
           {/* Sheets get the linen weave, not the card grain. */}
           <PaperTexture kind="linen" radius={radii.sheet} />
         </Animated.View>
-      </GestureHandlerRootView>
+      </View>
     </Modal>
   );
 }
