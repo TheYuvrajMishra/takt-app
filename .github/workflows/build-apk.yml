@@ -92,6 +92,26 @@ jobs:
       - name: Rename APK
         run: cp android/app/build/outputs/apk/release/app-release.apk ./app-release.apk
 
+      - name: Write version.json
+        run: |
+          python3 - <<'EOF'
+          import hashlib, json, os
+          from datetime import datetime, timezone
+          app = json.load(open('app.json'))['expo']
+          apk = 'app-release.apk'
+          info = {
+            'versionCode': int(os.environ['VERSION_CODE']),
+            'versionName': app.get('version', '1.0.0'),
+            'apkUrl': 'https://github.com/TheYuvrajMishra/takt-app/releases/latest/download/app-release.apk',
+            'sha256': hashlib.sha256(open(apk, 'rb').read()).hexdigest(),
+            'sizeBytes': os.path.getsize(apk),
+            'notes': os.popen("git log -1 --format=%s").read().strip(),
+            'publishedAt': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+          }
+          open('version.json', 'w').write(json.dumps(info, indent=2))
+          print(json.dumps(info))
+          EOF
+
       - name: Replace rolling `latest` release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -102,5 +122,6 @@ jobs:
           if [ "$HAS_KEYSTORE" = "true" ]; then SIGNED="signed"; fi
           gh release create latest \
             --title "Latest build (run #${{ github.run_number }})" \
-            --notes "Takt ${SIGNED} release APK, versionCode ${{ github.run_number }} (commit ${{ github.sha }})." \
-            ./app-release.apk
+            --notes "Takt ${SIGNED} release APK, versionCode ${{ github.run_number }} (commit ${{ github.sha }})" \
+            ./app-release.apk \
+            ./version.json
