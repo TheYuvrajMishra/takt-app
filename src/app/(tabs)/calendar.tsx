@@ -1409,7 +1409,6 @@ export default function CalendarScreen() {
         <Dock
           categories={cats}
           onLongPress={(category, anchor) => radial.openRadial(category, anchor)}
-          onTap={(category) => dockCreateEarliest(category)}
           onDrop={handleDockDrop}
           onRadialMove={radial.handleRadialMove}
           onRadialRelease={radial.handleRadialRelease}

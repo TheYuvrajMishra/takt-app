@@ -97,24 +97,6 @@
   dragging, the section under the finger highlights; on Today the drop
   creates in the earliest empty slot, on Calendar it creates at the drop
   position.
-- A tap on a pill is a QUICK-ADD: it creates the category in the earliest
-  empty slot (no subcategory — the hold + radial is for picking one) and
-  closes the drawer. A pill must respond to a tap: with no tap action, a
-  tap did nothing at all and the drawer read as dead (2026-11-10). The
-  tap is a fast-failing `Gesture.Tap` (maxDuration 250ms, maxDistance
-  10dp), Simultaneous with the hold/pan pair — NOT Exclusive: an
-  Exclusive would block the Pan until the tap failed at 250ms, so the
-  hold-progress ring would not start filling until then.
-- A Pan that sits over tappable content MUST have an activation threshold
-  on BOTH axes (`.minDistance(10)` on the sheet's body/header Pans and the
-  dock closePan). A Pan with none activates on the tap's finger jitter
-  and claims the touch, so every button under it stops responding — that
-  is how every button inside a sheet went dead (2026-11-10). And a
-  threshold on ONE axis only is not enough: the v23 fix used
-  activeOffsetY, which guards Y, but a diagonal tap jitter with a
-  horizontal component still activated the Pan, so the update sheet and
-  the calendar create sheet stayed dead. A tap moves <10dp in any
-  direction and falls through to the button; a real drag moves more.
 - Radial subcategory flow (Today and Calendar), ONE continuous touch —
   hold (300ms) → subcategories bloom → slide the finger to one → hover it
   300ms (`RADIAL_HOVER_MS`) and the drag arms (ghost follows the finger)
@@ -166,22 +148,11 @@
 ## Sheets (Fix 5)
 - ONE shared `<Sheet>` for every drawer. It renders
   `GestureHandlerRootView` inside the Modal (that was the root cause of
-  undraggable sheets). The handle + header drag to close (minDistance 10,
-  both axes); backdrop tap and hardware back close. The body is a PLAIN
-  React Native ScrollView with NO gesture on it — the body drag used to
-  coexist with the scroll (drag-down closed only when the inner scroll
-  was at the top), but that Pan sat above every button and swallowed
-  taps, and two threshold tunings (v23, v25) did not restore them, so
-  the bodyPan was removed entirely (2026-11-10). Do NOT re-add a Pan
-  over the body; that is the dead-buttons bug coming back. v29 briefly
-  removed ALL RNGH (including the header drag) after a buttons-dead
-  report that came ~5 min after v27 published (almost certainly the old
-  build); v31 restored the header drag on the user's ask, keeping the
-  body Pan removed. Close past ~30% height or velocity >800px/s, timing
-  240ms with `DECEL`; backdrop fades with the drag. What design round 2
-  (v22) actually changed in this file: only the linen PaperTexture
-  (pointerEvents none) — it did not break the drag or the buttons; the
-  dead-buttons bug predates v22 (reported on v21).
+  undraggable sheets), the handle + header always drag, and the body scroll
+  and the sheet drag coexist (drag-down closes only when the inner scroll
+  is at the top). Close past ~30% height or velocity >800px/s, timing
+  240ms with `DECEL`; backdrop fades with the drag; hardware back and
+  backdrop tap close.
 
 ## Auto-updater (Fix 6)
 - Every CI release publishes `version.json` next to the APK
