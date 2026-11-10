@@ -63,13 +63,18 @@
   of `HOLD_MS = 300` (`src/theme/motion.ts`), cancelled by >8px of movement
   (`HOLD_CANCEL_PX`). While holding, the chip scales to 0.96 and a thin
   ring fills; a light haptic fires at activation. The ring is centered
-  exactly on the icon (17dp from the node's left edge, 3dp gap — see
-  `RING_GEOMETRY` in `src/components/dockHelpers.ts`, tested).
+  exactly on the icon (17dp from the node's left edge AND top, 3dp gap —
+  see `RING_GEOMETRY` in `src/components/dockHelpers.ts`, tested). The
+  ring's position is explicit constants, never `top: '50%'` (that resolves
+  against the content-box height and sat the ring 6dp too high).
 - The dock is a fixed row of the 3–4 most-used chips (usage-ordered, most
   important at both ends) with a drag handle; the collapsed container is
   transparent (no solid band over the content below). Swipe up on the
   dock/handle (or tap the handle) expands it into a drawer panel with all
-  chips. Swipe down or tap outside collapses. A hold closes the drawer
+  chips. The drawer's height is driven by measured heights mirrored into
+  shared values (`rowHSV`/`gridHSV`/`handleHSV` — never refs: a worklet
+  captures its closure at install time, so a ref reads its initial value
+  forever and the drawer stays clipped to one row). Swipe down or tap outside collapses. A hold closes the drawer
   first, then: a category with subcategories opens the radial menu (Today),
   anything else starts a drag. While dragging, the section under the
   finger highlights; on Today the drop creates in the earliest empty slot.

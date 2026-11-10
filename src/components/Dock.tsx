@@ -97,6 +97,16 @@ export function Dock({ categories, onLongPress, onDrop, onDragMove, onDragAbort,
   const [gridH, setGridH] = useState(0);
   const rowHRef = useRef(0);
   const gridHRef = useRef(0);
+  // Measured heights mirrored into shared values for the container-height
+  // worklet below. The refs MUST NOT be read there: a worklet captures its
+  // closure when it is first installed, so `rowHRef.current` reads 0
+  // forever (the drawer stayed at row height and the grid was clipped to
+  // its first row — reported on device 2026-11-10). Shared values are the
+  // only live channel into a worklet. The refs stay for the JS-side
+  // reportDockHeight effect only.
+  const rowHSV = useSharedValue(0);
+  const gridHSV = useSharedValue(0);
+  const handleHSV = useSharedValue(0);
 
   const beginDrag = (category: Category, index: number, x: number, y: number) => {
     setDragged(category);
@@ -161,9 +171,11 @@ export function Dock({ categories, onLongPress, onDrop, onDragMove, onDragAbort,
   const handleGesture = Gesture.Exclusive(handlePan, handleTap);
 
   const containerStyle = useAnimatedStyle(() => {
-    const row = rowHRef.current;
-    const grid = gridHRef.current;
-    const h = row + (grid - row) * expandProgress.value;
+    // Reads shared values only — never the refs (see the note above).
+    // The handle sits above the body inside this container, so its height
+    // belongs in the total or the last row is clipped by ~17dp.
+    const h =
+      handleHSV.value + rowHSV.value + (gridHSV.value - rowHSV.value) * expandProgress.value;
     return { height: h > 0 ? h : undefined };
   });
   const rowStyle = useAnimatedStyle(() => ({
@@ -190,14 +202,19 @@ export function Dock({ categories, onLongPress, onDrop, onDragMove, onDragAbort,
   const onRowLayout = (h: number) => {
     if (h > 0 && h !== rowHRef.current) {
       rowHRef.current = h;
+      rowHSV.value = h;
       setRowH(h);
     }
   };
   const onGridLayout = (h: number) => {
     if (h > 0 && h !== gridHRef.current) {
       gridHRef.current = h;
+      gridHSV.value = h;
       setGridH(h);
     }
+  };
+  const onHandleLayout = (h: number) => {
+    if (h > 0) handleHSV.value = h;
   };
 
   return (
@@ -219,7 +236,13 @@ export function Dock({ categories, onLongPress, onDrop, onDragMove, onDragAbort,
           <Animated.View style={[styles.drawerPanel, panelStyle]} pointerEvents="none" />
 
           <GestureDetector gesture={handleGesture}>
-            <View style={styles.handleWrap} accessible accessibilityRole="button" accessibilityLabel={expanded ? 'Collapse dock' : 'Expand dock'}>
+            <View
+              style={styles.handleWrap}
+              onLayout={(e) => onHandleLayout(e.nativeEvent.layout.height)}
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel={expanded ? 'Collapse dock' : 'Expand dock'}
+            >
               <View style={styles.handle} />
             </View>
           </GestureDetector>
@@ -558,8 +581,7 @@ const styles = StyleSheet.create({
   ring: {
     position: 'absolute',
     left: RING_GEOMETRY.ringLeft,
-    top: '50%',
-    marginTop: -RING_GEOMETRY.ringSize / 2,
+    top: RING_GEOMETRY.ringTop,
     width: RING_GEOMETRY.ringSize,
     height: RING_GEOMETRY.ringSize,
   },
