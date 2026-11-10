@@ -164,18 +164,18 @@
   ScrollView claims two-finger touches and the pinch never fires.
 
 ## Sheets (Fix 5)
-- ONE shared `<Sheet>` for every drawer. It renders
-  `GestureHandlerRootView` inside the Modal (that was the root cause of
-  undraggable sheets). The handle + header drag to close (minDistance 10,
-  both axes); backdrop tap and hardware back close. The body is a PLAIN
-  React Native ScrollView with NO gesture on it — the body drag used to
-  coexist with the scroll (drag-down closed only when the inner scroll
-  was at the top), but that Pan sat above every button and swallowed
-  taps, and two threshold tunings (v23, v25) did not restore them, so
-  the bodyPan was removed entirely (2026-11-10). Do NOT re-add a Pan
-  over the body; that is the dead-buttons bug coming back. Close past
-  ~30% height or velocity >800px/s, timing 240ms with `DECEL`; backdrop
-  fades with the drag.
+- ONE shared `<Sheet>` for every drawer. The body is a PLAIN React
+  Native ScrollView with NO gesture on it, and the Sheet has NO RNGH
+  at all — no GestureHandlerRootView, no GestureDetector, no Pan. The
+  sheet closes via backdrop tap or hardware back ONLY; there is no drag
+  to close. That is deliberate: the buttons were dead through v23, v25
+  and v27. First the bodyPan sat above every button and swallowed taps
+  (threshold tunings could not restore them), then the remaining
+  GestureHandlerRootView + headerPan in the Modal still broke
+  Pressables while native TextInput worked. Do NOT re-add RNGH or a Pan
+  to the Sheet; that is the dead-buttons bug coming back. Close past
+  ~30% height or velocity >800px/s no longer applies (no drag); the
+  backdrop fades with the open animation.
 
 ## Auto-updater (Fix 6)
 - Every CI release publishes `version.json` next to the APK
