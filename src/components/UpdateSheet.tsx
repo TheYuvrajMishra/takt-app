@@ -14,6 +14,7 @@ export function UpdateSheet() {
   const remote = useUpdaterStore((s) => s.remote);
   const progress = useUpdaterStore((s) => s.progress);
   const downloadedBytes = useUpdaterStore((s) => s.downloadedBytes);
+  const verifyProgress = useUpdaterStore((s) => s.verifyProgress);
   const error = useUpdaterStore((s) => s.error);
   const sheetOpen = useUpdaterStore((s) => s.sheetOpen);
   const closeSheet = useUpdaterStore((s) => s.closeSheet);
@@ -27,8 +28,10 @@ export function UpdateSheet() {
   const title =
     status === 'downloading'
       ? 'Downloading update'
-      : status === 'ready'
-        ? 'Update downloaded'
+      : status === 'verifying'
+        ? 'Verifying update'
+        : status === 'ready'
+          ? 'Update downloaded'
         : status === 'installing'
           ? 'Installing update'
           : status === 'error'
@@ -69,6 +72,21 @@ export function UpdateSheet() {
           <Text style={styles.copy}>You can close this sheet — the download keeps going.</Text>
           <Pressable style={styles.ghost} onPress={() => void cancelDownload()}>
             <Text style={styles.ghostText}>Cancel download</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {status === 'verifying' && remote ? (
+        <View style={styles.body}>
+          <View style={styles.track}>
+            <View style={[styles.fill, { width: `${Math.round(verifyProgress * 100)}%` }]} />
+          </View>
+          <Text style={styles.meta}>
+            Checking the download matches the release · {Math.round(verifyProgress * 100)}%
+          </Text>
+          <Text style={styles.copy}>This takes a few seconds — the install button appears next.</Text>
+          <Pressable style={styles.ghost} onPress={() => void cancelDownload()}>
+            <Text style={styles.ghostText}>Cancel</Text>
           </Pressable>
         </View>
       ) : null}

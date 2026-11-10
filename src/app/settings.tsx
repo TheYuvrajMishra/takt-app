@@ -379,7 +379,7 @@ export default function SettingsScreen() {
             Version 1.0.0{installedVersionCode() > 0 ? ` (build ${installedVersionCode()})` : ''}
           </Text>
         </View>
-        {updateRemote && (updateStatus === 'available' || updateStatus === 'ready' || updateStatus === 'downloading') ? (
+        {updateRemote && (updateStatus === 'available' || updateStatus === 'ready' || updateStatus === 'downloading' || updateStatus === 'verifying') ? (
           <>
             <View style={styles.divider} />
             <Pressable style={styles.actionRow} onPress={openUpdateSheet}>

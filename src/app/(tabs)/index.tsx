@@ -752,6 +752,7 @@ function UpdateBanner() {
   const status = useUpdaterStore((s) => s.status);
   const remote = useUpdaterStore((s) => s.remote);
   const progress = useUpdaterStore((s) => s.progress);
+  const verifyProgress = useUpdaterStore((s) => s.verifyProgress);
   const openSheet = useUpdaterStore((s) => s.openSheet);
   if (!remote) return null;
   if (status === 'available') {
@@ -769,6 +770,16 @@ function UpdateBanner() {
       <Pressable style={styles.updateBanner} onPress={openSheet} accessibilityRole="button">
         <Text style={styles.updateBannerText}>
           Downloading update · {Math.round(progress * 100)}%
+        </Text>
+        <Text style={styles.updateBannerAction}>View</Text>
+      </Pressable>
+    );
+  }
+  if (status === 'verifying') {
+    return (
+      <Pressable style={styles.updateBanner} onPress={openSheet} accessibilityRole="button">
+        <Text style={styles.updateBannerText}>
+          Verifying update · {Math.round(verifyProgress * 100)}%
         </Text>
         <Text style={styles.updateBannerAction}>View</Text>
       </Pressable>

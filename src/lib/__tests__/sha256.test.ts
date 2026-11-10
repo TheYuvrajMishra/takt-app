@@ -57,4 +57,29 @@ describe('base64ToBytes', () => {
     // Base64 of the bytes above (no Buffer in this tsconfig).
     expect(Array.from(base64ToBytes('AAECf4DI/w=='))).toEqual(Array.from(bytes));
   });
+
+  it('decodes a 1 MB deterministic buffer with a 1-byte tail (the updater chunk shape)', () => {
+    // Guards the lookup-table decoder the updater relies on for a 53 MB
+    // APK: every chunk is base64, the last chunk ends mid-group.
+    let seed = 12345;
+    const bytes = new Uint8Array(1_000_001);
+    for (let i = 0; i < bytes.length; i++) {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      bytes[i] = seed % 256;
+    }
+    // Independent reference encoder (separate logic from the decoder).
+    const alpha = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    let b64 = '';
+    for (let i = 0; i < bytes.length; i += 3) {
+      const b0 = bytes[i];
+      const b1 = i + 1 < bytes.length ? bytes[i + 1] : 0;
+      const b2 = i + 2 < bytes.length ? bytes[i + 2] : 0;
+      b64 +=
+        alpha[b0 >> 2] +
+        alpha[((b0 & 3) << 4) | (b1 >> 4)] +
+        (i + 1 < bytes.length ? alpha[((b1 & 15) << 2) | (b2 >> 6)] : '=') +
+        (i + 2 < bytes.length ? alpha[b2 & 63] : '=');
+    }
+    expect(Array.from(base64ToBytes(b64))).toEqual(Array.from(bytes));
+  });
 });

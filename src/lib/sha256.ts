@@ -29,6 +29,10 @@ export class Sha256 {
   private buf = new Uint8Array(64);
   private bufLen = 0;
   private totalLen = 0;
+  /** Reused message schedule — allocating a fresh 64-entry array + a
+      DataView per 64-byte block made the 53 MB APK hash take minutes on
+      a phone (830k allocations). */
+  private w = new Array<number>(64);
 
   update(data: Uint8Array): void {
     this.totalLen += data.length;
@@ -40,12 +44,12 @@ export class Sha256 {
       this.bufLen += take;
       offset = take;
       if (this.bufLen === 64) {
-        this.compress(this.buf);
+        this.compress(this.buf, 0);
         this.bufLen = 0;
       }
     }
     while (offset + 64 <= data.length) {
-      this.compress(data.subarray(offset, offset + 64));
+      this.compress(data, offset);
       offset += 64;
     }
     if (offset < data.length) {
@@ -70,10 +74,15 @@ export class Sha256 {
     return out;
   }
 
-  private compress(block: Uint8Array): void {
-    const w = new Array<number>(64);
-    const dv = new DataView(block.buffer, block.byteOffset, block.byteLength);
-    for (let i = 0; i < 16; i++) w[i] = dv.getUint32(i * 4);
+  private compress(block: Uint8Array, off: number): void {
+    const w = this.w;
+    // Big-endian words, read straight from the bytes: no per-block
+    // DataView (830k of them for a 53 MB APK). Shifts are mod 2^32, so
+    // the signedness of `<< 24` does not change any bit pattern.
+    for (let i = 0; i < 16; i++) {
+      const o = off + i * 4;
+      w[i] = (block[o] << 24) | (block[o + 1] << 16) | (block[o + 2] << 8) | block[o + 3];
+    }
     for (let i = 16; i < 64; i++) {
       const s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3);
       const s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10);
@@ -117,21 +126,36 @@ export function sha256Hex(data: Uint8Array): string {
 
 const B64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
+/**
+ * Char-code -> 6-bit value lookup (255 = invalid). The old decoder called
+ * `B64_ALPHABET.indexOf(clean[i])` per character — an O(64) scan plus a
+ * one-char string allocation per byte, ~78M of them for a 53 MB APK.
+ * A table lookup via charCodeAt is O(1) with no allocation.
+ */
+const B64_TABLE: Uint8Array = (() => {
+  const t = new Uint8Array(256).fill(255);
+  for (let i = 0; i < B64_ALPHABET.length; i++) t[B64_ALPHABET.charCodeAt(i)] = i;
+  return t;
+})();
+
 /** Decode a base64 string (no whitespace) to raw bytes. Throws on bad input. */
 export function base64ToBytes(b64: string): Uint8Array {
-  const clean = b64.replace(/=+$/, '');
-  const out = new Uint8Array(Math.floor((clean.length * 3) / 4));
+  // Strip padding by length, not a regex (regex on a multi-MB string).
+  let len = b64.length;
+  if (len > 0 && b64.charCodeAt(len - 1) === 61) len--; // '='
+  if (len > 0 && b64.charCodeAt(len - 1) === 61) len--;
+  const out = new Uint8Array(Math.floor((len * 3) / 4));
   let o = 0;
-  for (let i = 0; i < clean.length; i += 4) {
-    const n0 = B64_ALPHABET.indexOf(clean[i]);
-    const n1 = B64_ALPHABET.indexOf(clean[i + 1]);
-    const n2 = i + 2 < clean.length ? B64_ALPHABET.indexOf(clean[i + 2]) : 0;
-    const n3 = i + 3 < clean.length ? B64_ALPHABET.indexOf(clean[i + 3]) : 0;
-    if (n0 < 0 || n1 < 0 || n2 < 0 || n3 < 0) throw new Error('Invalid base64');
+  for (let i = 0; i < len; i += 4) {
+    const n0 = B64_TABLE[b64.charCodeAt(i)];
+    const n1 = B64_TABLE[b64.charCodeAt(i + 1)];
+    const n2 = i + 2 < len ? B64_TABLE[b64.charCodeAt(i + 2)] : 0;
+    const n3 = i + 3 < len ? B64_TABLE[b64.charCodeAt(i + 3)] : 0;
+    if (n0 > 63 || n1 > 63 || n2 > 63 || n3 > 63) throw new Error('Invalid base64');
     const triple = (n0 << 18) | (n1 << 12) | (n2 << 6) | n3;
     out[o++] = (triple >> 16) & 0xff;
-    if (i + 2 < clean.length) out[o++] = (triple >> 8) & 0xff;
-    if (i + 3 < clean.length) out[o++] = triple & 0xff;
+    if (i + 2 < len) out[o++] = (triple >> 8) & 0xff;
+    if (i + 3 < len) out[o++] = triple & 0xff;
   }
   return out.subarray(0, o);
 }

@@ -116,7 +116,12 @@
   that version; checks fail silently offline.
 - Download in-app with progress + cancel; the file is verified by size +
   SHA-256 (pure-TS incremental hash, NIST-vector tested) before anything
-  is offered to install. Install goes through Android's own package
+  is offered to install. Verification is its own status (`verifying`,
+  with progress) — the download bar must never sit frozen at 100% while
+  the hash runs. The hash path is the hot loop: base64 decode via a
+  char-code lookup table (never `indexOf` per char) and a reused message
+  schedule + direct byte reads in compress (never a fresh array/DataView
+  per block). Install goes through Android's own package
   installer via a FileProvider content URI; the one manual step is
   Android's own "allow installs from Takt" confirm, said once in the
   sheet. The downloaded APK is deleted after the app is replaced. After

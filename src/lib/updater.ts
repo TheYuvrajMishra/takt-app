@@ -15,8 +15,8 @@
 // The downloaded APK is deleted after the app has been replaced (or
 // when a download fails verification).
 //
-// State machine: idle -> checking -> available -> downloading -> ready
-// -> installing -> (app replaced) ; error returns to idle/available.
+// State machine: idle -> checking -> available -> downloading -> verifying
+// -> ready -> installing -> (app replaced) ; error returns to idle/available.
 // "Later" suppresses the sheet for 24h for that version; Settings
 // always shows a pending update. Checks fail silently when offline —
 // the user never sees an error for a background check.
@@ -62,6 +62,7 @@ export type UpdaterStatus =
   | 'checking'
   | 'available'
   | 'downloading'
+  | 'verifying'
   | 'ready'
   | 'installing'
   | 'error';
@@ -88,10 +89,16 @@ async function savePersisted(patch: Partial<UpdaterPersisted>): Promise<void> {
   await useStore.getState().updateSettings({ updater: next });
 }
 
-async function sha256File(uri: string, sizeBytes: number): Promise<string> {
+async function sha256File(
+  uri: string,
+  sizeBytes: number,
+  onProgress?: (fraction: number) => void,
+  isCancelled?: () => boolean,
+): Promise<string> {
   const hash = new Sha256();
   let offset = 0;
   while (offset < sizeBytes) {
+    if (isCancelled?.()) throw new Error('cancelled');
     const len = Math.min(HASH_CHUNK_BYTES, sizeBytes - offset);
     const b64 = await FileSystem.readAsStringAsync(uri, {
       encoding: FileSystem.EncodingType.Base64,
@@ -100,6 +107,7 @@ async function sha256File(uri: string, sizeBytes: number): Promise<string> {
     });
     hash.update(base64ToBytes(b64));
     offset += len;
+    onProgress?.(offset / sizeBytes);
   }
   return Array.from(hash.digest())
     .map((b) => b.toString(16).padStart(2, '0'))
@@ -122,6 +130,8 @@ interface UpdaterState {
   remote: VersionInfo | null;
   progress: number; // 0..1 while downloading
   downloadedBytes: number;
+  /** 0..1 while verifying (hashing the download). */
+  verifyProgress: number;
   error: string | null;
   sheetOpen: boolean;
   /** "What's new" notes, shown once on the first launch after an update. */
@@ -146,6 +156,9 @@ interface UpdaterState {
 
 export const useUpdaterStore = create<UpdaterState>()((set, get) => {
   let downloadTask: { cancelAsync: () => Promise<void> } | null = null;
+  // Bumped when a verification is cancelled: the hashing loop checks it
+  // between chunks and aborts instead of finishing into 'ready'.
+  let verifyGen = 0;
 
   /** Hand the verified APK to Android's package installer. */
   async function launchInstaller(): Promise<void> {
@@ -168,6 +181,7 @@ export const useUpdaterStore = create<UpdaterState>()((set, get) => {
     remote: null,
     progress: 0,
     downloadedBytes: 0,
+    verifyProgress: 0,
     error: null,
     sheetOpen: false,
     whatsNew: null,
@@ -175,7 +189,7 @@ export const useUpdaterStore = create<UpdaterState>()((set, get) => {
 
     checkForUpdates: async (manual = false) => {
       const { status } = get();
-      if (status === 'downloading' || status === 'installing') return;
+      if (status === 'downloading' || status === 'verifying' || status === 'installing') return;
       const now = Date.now();
       const p = persisted();
       if (!shouldCheckNow(now, p.lastCheckAt, manual)) return;
@@ -224,7 +238,7 @@ export const useUpdaterStore = create<UpdaterState>()((set, get) => {
         set({ status: 'error', error: 'No storage available for the download.' });
         return;
       }
-      set({ status: 'downloading', progress: 0, downloadedBytes: 0, error: null });
+      set({ status: 'downloading', progress: 0, downloadedBytes: 0, verifyProgress: 0, error: null });
       try {
         const dir = uri.slice(0, uri.lastIndexOf('/'));
         await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
@@ -247,25 +261,39 @@ export const useUpdaterStore = create<UpdaterState>()((set, get) => {
           throw new Error(`Download failed (HTTP ${result?.status ?? '?'})`);
         }
         // Verify before offering anything to install: size, then SHA-256.
+        // This is the slow part on a phone (pure-JS hash of a 53 MB file),
+        // so it gets its own status + progress instead of sitting on a
+        // frozen 100% download bar — that is what looked "stuck".
         const info = await FileSystem.getInfoAsync(uri);
         if (!info.exists || (info.size != null && info.size !== remote.sizeBytes)) {
           throw new Error('size mismatch');
         }
         const actualSize = info.size ?? remote.sizeBytes;
-        const hash = await sha256File(uri, actualSize);
+        const gen = verifyGen;
+        set({ status: 'verifying', verifyProgress: 0 });
+        const hash = await sha256File(
+          uri,
+          actualSize,
+          (fraction) => set({ verifyProgress: fraction }),
+          () => gen !== verifyGen,
+        );
         if (hash !== remote.sha256) {
           throw new Error('hash mismatch');
         }
         await savePersisted({ downloadedVersionCode: remote.versionCode });
-        set({ status: 'ready', progress: 1 });
+        set({ status: 'ready', progress: 1, verifyProgress: 1 });
       } catch (e) {
         downloadTask = null;
         await deleteApkFile();
+        if (e instanceof Error && e.message === 'cancelled') {
+          set({ status: 'available', progress: 0, downloadedBytes: 0, verifyProgress: 0 });
+          return;
+        }
         const msg =
           e instanceof Error && (e.message === 'size mismatch' || e.message === 'hash mismatch')
             ? "The download didn't match the release — try again."
             : 'The download was interrupted — try again when you have a connection.';
-        set({ status: 'error', error: msg, progress: 0, downloadedBytes: 0 });
+        set({ status: 'error', error: msg, progress: 0, downloadedBytes: 0, verifyProgress: 0 });
       }
     },
 
@@ -278,8 +306,11 @@ export const useUpdaterStore = create<UpdaterState>()((set, get) => {
         }
         downloadTask = null;
       }
+      // Abort a verification in progress: the hashing loop checks this
+      // between chunks and stops instead of finishing into 'ready'.
+      verifyGen += 1;
       await deleteApkFile();
-      set((s) => ({ status: s.remote ? 'available' : 'idle', progress: 0, downloadedBytes: 0 }));
+      set((s) => ({ status: s.remote ? 'available' : 'idle', progress: 0, downloadedBytes: 0, verifyProgress: 0 }));
     },
 
     installUpdate: async () => {
