@@ -166,11 +166,16 @@
 ## Sheets (Fix 5)
 - ONE shared `<Sheet>` for every drawer. It renders
   `GestureHandlerRootView` inside the Modal (that was the root cause of
-  undraggable sheets), the handle + header always drag, and the body scroll
-  and the sheet drag coexist (drag-down closes only when the inner scroll
-  is at the top). Close past ~30% height or velocity >800px/s, timing
-  240ms with `DECEL`; backdrop fades with the drag; hardware back and
-  backdrop tap close.
+  undraggable sheets). The handle + header drag to close (minDistance 10,
+  both axes); backdrop tap and hardware back close. The body is a PLAIN
+  React Native ScrollView with NO gesture on it — the body drag used to
+  coexist with the scroll (drag-down closed only when the inner scroll
+  was at the top), but that Pan sat above every button and swallowed
+  taps, and two threshold tunings (v23, v25) did not restore them, so
+  the bodyPan was removed entirely (2026-11-10). Do NOT re-add a Pan
+  over the body; that is the dead-buttons bug coming back. Close past
+  ~30% height or velocity >800px/s, timing 240ms with `DECEL`; backdrop
+  fades with the drag.
 
 ## Auto-updater (Fix 6)
 - Every CI release publishes `version.json` next to the APK
