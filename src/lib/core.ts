@@ -29,6 +29,66 @@ export function disciplineScore(blocks: Block[], log: CompletionEntry[]): number
   return Math.round((earned / total) * 100);
 }
 
+// ---- day mini-timeline (Today hero) --------------------------------------
+// The hero shows a sneak peek of the day's timeline: one horizontal bar
+// covering the first block's start to the last block's end, with a
+// colour-coded segment per block and the free gaps left empty, so the
+// user sees at a glance where they are free. Segments are non-overlapping
+// and cover [range.start, range.end] exactly, so their flex proportions
+// are the time proportions (an overlapping later block is clamped to the
+// previous block's end; a fully covered block is dropped).
+export interface DayTimelineSegment {
+  kind: 'block' | 'free';
+  startMin: number;
+  endMin: number;
+  block?: Block;
+}
+
+export function timelineRange(blocks: Block[]): { start: number; end: number } | null {
+  if (blocks.length === 0) return null;
+  return {
+    start: Math.min(...blocks.map((b) => b.startMin)),
+    end: Math.max(...blocks.map((b) => blockEnd(b))),
+  };
+}
+
+export function dayTimelineSegments(blocks: Block[]): DayTimelineSegment[] {
+  const sorted = [...blocks].sort((a, b) => a.startMin - b.startMin);
+  const segs: DayTimelineSegment[] = [];
+  let cursor: number | null = null;
+  for (const b of sorted) {
+    const start = b.startMin;
+    const end = blockEnd(b);
+    if (cursor === null) {
+      cursor = start;
+    } else if (start > cursor) {
+      segs.push({ kind: 'free', startMin: cursor, endMin: start });
+      cursor = start;
+    } else if (end <= cursor) {
+      continue; // fully covered by an earlier block
+    }
+    const effStart = Math.max(start, cursor);
+    segs.push({ kind: 'block', startMin: effStart, endMin: end, block: b });
+    cursor = end;
+  }
+  return segs;
+}
+
+/** A minute's position on the timeline as a percentage, clamped 0..100. */
+export function timelinePct(min: number, start: number, end: number): number {
+  if (end <= start) return 0;
+  return Math.max(0, Math.min(100, ((min - start) / (end - start)) * 100));
+}
+
+/** minutes -> "3 h 05 min" / "8 h" / "45 min" (for the hero's "X of Y" line). */
+export function fmtHoursMin(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (h === 0) return `${m} min`;
+  if (m === 0) return `${h} h`;
+  return `${h} h ${String(m).padStart(2, '0')} min`;
+}
+
 export function blockEnd(b: Block): number {
   return b.startMin + b.durationMin;
 }

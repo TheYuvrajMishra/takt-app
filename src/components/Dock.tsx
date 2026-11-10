@@ -25,6 +25,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ViewStyle } from 'react-native';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Text } from './TText';
+import { PaperTexture } from './PaperTexture';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   runOnJS,
@@ -447,6 +448,8 @@ function DockNode({
         <Text style={styles.label} numberOfLines={1}>
           {category.name}
         </Text>
+        {/* Buttons get the coarse grain, not the fine card grain. */}
+        <PaperTexture kind="coarse" radius={radii.pill} />
       </Animated.View>
     </GestureDetector>
   );
@@ -470,6 +473,9 @@ const styles = StyleSheet.create({
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+    // Center-aligned: every wrapped row of pills is centered, not
+    // left-flushed (reported 2026-11-10).
+    justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 12,
     paddingBottom: 10,

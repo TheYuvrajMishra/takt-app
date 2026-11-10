@@ -1,8 +1,11 @@
 // Takt — BigButton. The large pill button (e.g. the Done button on Today).
 // Primary is carbon with paper text; secondary is paper with a hairline border.
+// Buttons carry the COARSE paper texture (chunky grain), not the fine card
+// grain — a button must read as a different material from a card.
 import type { PressableProps, ViewStyle } from 'react-native';
 import { Pressable, StyleSheet } from 'react-native';
 import { Text } from './TText';
+import { PaperTexture } from './PaperTexture';
 import { colors, fonts, hairline, radii } from '../theme/tokens';
 
 export interface BigButtonProps {
@@ -26,6 +29,7 @@ export function BigButton({ label, onPress, variant = 'primary', disabled, style
         style,
       ]}
     >
+      <PaperTexture kind="coarse" radius={radii.pill} />
       <Text style={[styles.text, variant === 'primary' ? styles.primaryText : styles.secondaryText]}>
         {label}
       </Text>
@@ -41,6 +45,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     minWidth: 220,
+    overflow: 'hidden',
   },
   primary: { backgroundColor: colors.carbon },
   secondary: { backgroundColor: colors.paper, borderWidth: 1, borderColor: hairline },

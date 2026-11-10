@@ -18,6 +18,7 @@ import type { ReactNode } from 'react';
 import { useEffect, useRef } from 'react';
 import { Modal, Pressable, StyleSheet, View } from 'react-native';
 import { Text } from './TText';
+import { PaperTexture } from './PaperTexture';
 import {
   Gesture,
   GestureDetector,
@@ -196,6 +197,8 @@ export function Sheet({ visible, onClose, title, scopeLabel, snapPoints, childre
               {children}
             </ScrollView>
           </GestureDetector>
+          {/* Sheets get the linen weave, not the card grain. */}
+          <PaperTexture kind="linen" radius={radii.sheet} />
         </Animated.View>
       </GestureHandlerRootView>
     </Modal>

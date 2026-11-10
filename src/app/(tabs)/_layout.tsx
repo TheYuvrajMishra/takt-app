@@ -204,25 +204,28 @@ function TabBar({ state, navigateToTab }: TabBarProps) {
   }));
 
   return (
-    <View style={[styles.barWrap, { bottom: insets.bottom + 12 }]}>
-      {/* Swipe-up cue: a small arrow above the bar (tap it to open too). */}
-      {hasDock && !dockExpanded ? (
-        <Pressable
-          onPress={() => setDockExpanded(true)}
-          accessibilityRole="button"
-          accessibilityLabel="Open categories"
-          hitSlop={12}
-          style={styles.arrowHit}
-        >
-          <Reanimated.View style={[styles.arrow, arrowStyle]}>
-            <Svg width={18} height={18} viewBox="0 0 24 24">
-              <Line x1="5" y1="15" x2="12" y2="8" stroke={colors.carbon} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-              <Line x1="12" y1="8" x2="19" y2="15" stroke={colors.carbon} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-            </Svg>
-          </Reanimated.View>
-        </Pressable>
-      ) : null}
-      <GestureDetector gesture={swipeUp}>
+    // The swipe-up Pan wraps the arrow AND the bar: a swipe starting on
+    // the arrow opens the drawer too (a tap on the arrow still opens it —
+    // the Pan only activates after 12dp of upward movement).
+    <GestureDetector gesture={swipeUp}>
+      <View style={[styles.barWrap, { bottom: insets.bottom + 12 }]}>
+        {/* Swipe-up cue: a small arrow above the bar (tap it to open too). */}
+        {hasDock && !dockExpanded ? (
+          <Pressable
+            onPress={() => setDockExpanded(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Open categories"
+            hitSlop={12}
+            style={styles.arrowHit}
+          >
+            <Reanimated.View style={[styles.arrow, arrowStyle]}>
+              <Svg width={18} height={18} viewBox="0 0 24 24">
+                <Line x1="5" y1="15" x2="12" y2="8" stroke={colors.carbon} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                <Line x1="12" y1="8" x2="19" y2="15" stroke={colors.carbon} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+              </Svg>
+            </Reanimated.View>
+          </Pressable>
+        ) : null}
         <View
           style={styles.bar}
           onLayout={(e) => reportNavbarHeight(e.nativeEvent.layout.height)}
@@ -256,8 +259,8 @@ function TabBar({ state, navigateToTab }: TabBarProps) {
             );
           })}
         </View>
-      </GestureDetector>
-    </View>
+      </View>
+    </GestureDetector>
   );
 }
 
