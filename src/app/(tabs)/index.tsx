@@ -1,12 +1,14 @@
-// Takt — Today screen (default home, center-aligned).
-// Greeting + live clock, butter hero with the discipline score so far today,
-// current task front and center, big Done button, timeline strip, and the
-// Now / Next up / Left / Done sections. Tapping a block opens a sheet whose
-// edits are scoped "Today only". Uses Worker A's real store
-// (src/store/useStore.ts) — no stub: the store landed before this screen.
+// Takt — Today screen (default home).
+// Butter hero with the discipline score so far today (with a mini
+// timeline of the day's blocks and a red now-marker), current task front
+// and center, big Done button, timeline strip, and the Now / Next up /
+// Left / Done sections. Tapping a block opens a sheet whose edits are
+// scoped "Today only". Uses Worker A's real store (src/store/useStore.ts)
+// — no stub: the store landed before this screen.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Text, TextInput } from '../../components/TText';
+import { Line, Rect, Svg } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, fonts, hairline, radii, spacing } from '../../theme/tokens';
 import { DEFAULT_DURATION_MIN } from '../../types';
@@ -16,11 +18,13 @@ import {
   dateKey,
   disciplineScore,
   earliestEmptySlot,
+  fmtHoursMin,
   minToTime,
 } from '../../lib/core';
 import { computeStreaks, daysFromStore } from '../../lib/stats';
 import { useStore } from '../../store/useStore';
 import { Card } from '../../components/Card';
+import { MiniTimeline } from '../../components/MiniTimeline';
 import { Pill } from '../../components/Pill';
 import type { PillStatus } from '../../components/Pill';
 import { BigButton } from '../../components/BigButton';
@@ -34,14 +38,6 @@ import { useRadialDrag } from '../../components/useRadialDrag';
 import { EndOfDaySheet } from '../../components/EndOfDaySheet';
 import { CategoryIcon } from '../../components/CategoryIcon';
 import { formatSize, useUpdaterStore } from '../../lib/updater';
-
-function greetingFor(hour: number): string {
-  if (hour < 5) return 'Up late';
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  if (hour < 21) return 'Good evening';
-  return 'Good night';
-}
 
 function fmtRemaining(mins: number): string {
   if (mins < 60) return `${mins} min left`;
@@ -218,6 +214,11 @@ export default function TodayScreen() {
   // the finger. Section layouts are content-relative, so the finger's
   // page Y is converted with the scroll offset; the ScrollScreen starts
   // at insets.top + 8 (the root's paddingTop).
+  //
+  // The tint is only for Now (and Done): Next up and Left never tint —
+  // the drop creates in the earliest empty slot wherever it lands, so
+  // tinting those two read as a false promise about where the block
+  // would go (reported 2026-11-10).
   const handleDragMove = useCallback(
     (x: number, y: number) => {
       ghostX.value = x;
@@ -230,6 +231,7 @@ export default function TodayScreen() {
           break;
         }
       }
+      if (found === 'next' || found === 'left') found = null;
       setHighlightedSection((prev) => (prev === found ? prev : found));
     },
     [ghostX, ghostY, insets.top],
@@ -320,11 +322,18 @@ export default function TodayScreen() {
     ? `${minToTime(firstTomorrow.startMin)} — ${firstTomorrow.title}`
     : 'Nothing scheduled yet';
 
-  const clock = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-  const dateLine = now.toLocaleDateString(undefined, {
-    weekday: 'long',
-    month: 'long',
+  // Completed vs planned minutes for the hero's "X h Y min of Z h" line.
+  const totalMin = blocks.reduce((s, b) => s + b.durationMin, 0);
+  const doneMin = blocks.reduce(
+    (s, b) => (getCompletion(b.id, today)?.status === 'complete' ? s + b.durationMin : s),
+    0,
+  );
+  // Date pill in the hero ("Tue, 10 Nov") — the timing lives in the card,
+  // not as separate text above it.
+  const datePill = now.toLocaleDateString(undefined, {
+    weekday: 'short',
     day: 'numeric',
+    month: 'short',
   });
 
   const dragGhostStyle = useAnimatedStyle(() => ({
@@ -345,21 +354,40 @@ export default function TodayScreen() {
           scrollYRef.current = e.nativeEvent.contentOffset.y;
         }}
       >
-        {/* Greeting + live clock */}
-        <Text style={styles.greeting}>{greetingFor(now.getHours())}</Text>
-        <Text style={styles.clock}>{clock}</Text>
-        <Text style={styles.dateLine}>{dateLine}</Text>
-
         {/* Update banner (Fix 6): calm, non-blocking, never interrupts a
             task or a drag — just a row that opens the update sheet. */}
         <UpdateBanner />
 
-        {/* Hero: discipline score + current task + Done */}
+        {/* Hero: discipline score + the day's mini timeline + current task
+            + Done. The timing lives in the card (date pill, X of Y, red
+            now-marker) — no separate greeting / clock text above it. */}
         <Card color={colors.butter} style={styles.hero}>
-          <Text style={styles.heroLabel}>Discipline so far today</Text>
+          <View style={styles.heroTopRow}>
+            <Text style={styles.heroToday}>TODAY</Text>
+            <View style={styles.datePill}>
+              <Svg width={15} height={15} viewBox="0 0 24 24">
+                <Rect x="3.5" y="5" width="17" height="16" rx="3" fill="none" stroke={colors.carbon} strokeWidth={1.75} />
+                <Line x1="3.5" y1="10" x2="20.5" y2="10" stroke={colors.carbon} strokeWidth={1.75} strokeLinecap="round" />
+                <Line x1="8" y1="2.5" x2="8" y2="6.5" stroke={colors.carbon} strokeWidth={1.75} strokeLinecap="round" />
+                <Line x1="16" y1="2.5" x2="16" y2="6.5" stroke={colors.carbon} strokeWidth={1.75} strokeLinecap="round" />
+              </Svg>
+              <Text style={styles.datePillText}>{datePill}</Text>
+            </View>
+          </View>
+          <Text style={styles.heroTitle}>Discipline so far</Text>
           <Text style={styles.score}>
             {blocks.length === 0 ? '—' : `${score}%`}
           </Text>
+          <Text style={styles.heroSub}>
+            {blocks.length === 0
+              ? 'Nothing planned yet'
+              : `${fmtHoursMin(doneMin)} of ${fmtHoursMin(totalMin)}`}
+          </Text>
+          {blocks.length > 0 ? (
+            <View style={styles.heroTimeline}>
+              <MiniTimeline blocks={blocks} nowMin={nowMin} />
+            </View>
+          ) : null}
           {heroBlock ? (
             <>
               <View style={styles.heroDivider} />
@@ -796,27 +824,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     alignItems: 'center',
   },
-  greeting: {
-    fontFamily: fonts.medium,
-    fontSize: 17,
-    color: colors.carbon,
-    textAlign: 'center',
-  },
-  clock: {
-    fontFamily: fonts.regular,
-    fontSize: 64,
-    lineHeight: 72,
-    color: colors.carbon,
-    textAlign: 'center',
-  },
-  dateLine: {
-    fontFamily: fonts.medium,
-    fontSize: 14,
-    color: colors.carbon,
-    opacity: 0.55,
-    textAlign: 'center',
-    marginBottom: spacing.lg,
-  },
   updateBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -829,9 +836,33 @@ const styles = StyleSheet.create({
   },
   updateBannerText: { fontFamily: fonts.medium, fontSize: 14, color: colors.carbon },
   updateBannerAction: { fontFamily: fonts.semibold, fontSize: 14, color: colors.carbon },
-  hero: { width: '100%', alignItems: 'center', paddingVertical: spacing.lg },
-  heroLabel: { fontFamily: fonts.medium, fontSize: 14, color: colors.carbon, opacity: 0.6 },
+  // Hero is left-aligned (the reference design): TODAY + date pill on one
+  // row, the title and the oversized score under them, the X-of-Y line,
+  // then the mini timeline. Only the Start / Snooze pair stays centred.
+  hero: { width: '100%', alignItems: 'flex-start', paddingVertical: spacing.lg },
+  heroTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  heroToday: { fontFamily: fonts.semibold, fontSize: 14, letterSpacing: 3, color: colors.carbon },
+  datePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.paper,
+    borderWidth: 1,
+    borderColor: hairline,
+    borderRadius: radii.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  datePillText: { fontFamily: fonts.medium, fontSize: 13, color: colors.carbon },
+  heroTitle: { fontFamily: fonts.semibold, fontSize: 28, lineHeight: 34, color: colors.carbon, marginTop: spacing.md },
   score: { fontFamily: fonts.regular, fontSize: 110, lineHeight: 118, color: colors.carbon },
+  heroSub: { fontFamily: fonts.medium, fontSize: 15, color: colors.carbon, opacity: 0.6 },
+  heroTimeline: { width: '100%', marginTop: spacing.lg },
   heroDivider: { width: '100%', height: 1, backgroundColor: hairline, marginVertical: spacing.md },
   heroTaskRow: { flexDirection: 'row', alignItems: 'center', gap: 12, width: '100%' },
   heroTaskText: { flex: 1 },
@@ -847,7 +878,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   doneButton: { marginTop: spacing.lg, width: '100%' },
-  secondaryRow: { flexDirection: 'row', gap: 10, marginTop: spacing.sm },
+  secondaryRow: { flexDirection: 'row', gap: 10, marginTop: spacing.sm, alignSelf: 'center' },
   secondaryButton: {
     backgroundColor: colors.paper,
     borderWidth: 1,

@@ -31,28 +31,24 @@ export const statusColors = {
 export const radii = { card: 32, cardSm: 28, pill: 999, sheet: 36 } as const;
 
 /**
- * Realistic shadows: carbon-tinted, never grey. A card gets TWO — a large
- * soft ambient plus a tight contact shadow — layered by nesting two
- * views (see Card): one shadow per view is all the platform gives us,
- * so the pair is what makes the lift read as real. Smaller surfaces
- * (chips, pills, blocks at rest) take a single soft one.
+ * Realistic shadows: carbon-tinted, never grey. A card takes ONE soft
+ * shadow (`card`) — the earlier two-view ambient + contact pair drew a
+ * dark line just inside the card edge on the same-colour fill and read
+ * as a glitch, and the nesting broke full-width cards (the inner view
+ * shrink-wrapped when the caller set alignItems center). Smaller
+ * surfaces (chips, pills, blocks at rest) take a single soft one.
  */
 export const shadows = {
-  /** Large soft ambient: the card floating above the page. */
-  ambient: {
+  // One soft realistic shadow for cards: a single large, low-opacity
+  // ambient — NOT two nested shadows. The nested ambient + contact pair
+  // drew a dark line just inside the card edge on the same-colour fill
+  // and read as a glitch (reported 2026-11-10).
+  card: {
     shadowColor: colors.carbon,
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.07,
-    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.1,
+    shadowRadius: 20,
     elevation: 4,
-  },
-  /** Tight contact: the card's edge meeting the surface. */
-  contact: {
-    shadowColor: colors.carbon,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 3,
-    elevation: 1,
   },
   /** Single soft shadow for small surfaces at rest (blocks, pills). */
   soft: {

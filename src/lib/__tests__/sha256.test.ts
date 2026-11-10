@@ -58,9 +58,11 @@ describe('base64ToBytes', () => {
     expect(Array.from(base64ToBytes('AAECf4DI/w=='))).toEqual(Array.from(bytes));
   });
 
-  it('decodes a 1 MB deterministic buffer with a 1-byte tail (the updater chunk shape)', () => {
+  it('decodes a 1 MB deterministic buffer with a 1-byte tail (the updater chunk shape)', { timeout: 15000 }, () => {
     // Guards the lookup-table decoder the updater relies on for a 53 MB
     // APK: every chunk is base64, the last chunk ends mid-group.
+    // (Timeout raised: the 1 MB LCG loop takes ~2s alone and ~5s under
+    // parallel load, which flaked on the default 5s timeout.)
     let seed = 12345;
     const bytes = new Uint8Array(1_000_001);
     for (let i = 0; i < bytes.length; i++) {
