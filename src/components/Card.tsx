@@ -8,9 +8,14 @@
 // alignItems: center made the inner shell shrink-wrap to its content,
 // rendering the hero at half width. A single view carries the fill, the
 // padding, the grain and one balanced shadow, so the caller's width and
-// alignment land on the same view and the card is full width. A subtle
-// paper grain sits on top of the fill (translucent, so text stays crisp
-// through it).
+// alignment land on the same view and the card is full width.
+//
+// The grain sits BEHIND the content, not on top of it. It used to render
+// last (above the fill, above the buttons) with pointerEvents none — but
+// the hero's Done / Start / Snooze still would not tap on device, so the
+// texture now goes first: it can never cover a button, by construction.
+// At 5% opacity over the fill the look is the same; the content stays
+// crisp because the grain never sits on the text.
 import type { ReactNode } from 'react';
 import type { PressableProps, ViewStyle } from 'react-native';
 import { Pressable, StyleSheet, View } from 'react-native';
@@ -30,10 +35,12 @@ export interface CardProps {
 
 export function Card({ children, color = colors.paper, radius = radii.card, style, onPress, testID }: CardProps) {
   const cardStyle = { backgroundColor: color, borderRadius: radius };
+  // Grain first (behind the content): it textures the fill, and it can
+  // never sit on top of a button. See the header comment.
   const inner = (
     <>
-      {children}
       <PaperTexture radius={radius} />
+      {children}
     </>
   );
   if (onPress) {

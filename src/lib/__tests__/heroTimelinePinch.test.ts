@@ -11,7 +11,21 @@ import CAL_SRC from '../../app/(tabs)/calendar.tsx?raw';
 import TIMELINE_SRC from '../../components/MiniTimeline.tsx?raw';
 // eslint-disable-next-line import/no-unresolved
 import BLOCKCARD_SRC from '../../components/calendar/BlockCard.tsx?raw';
+// eslint-disable-next-line import/no-unresolved
+import CARD_SRC from '../../components/Card.tsx?raw';
 import { describe, expect, it } from 'vitest';
+
+describe('card texture sits behind the buttons', () => {
+  it('renders the grain before the children, so it can never cover a button', () => {
+    // The hero's Done / Start / Snooze would not tap: the full-card
+    // grain rendered last (on top) intercepted the taps despite
+    // pointerEvents none. Grain first = tappable by construction.
+    const start = CARD_SRC.indexOf('const inner = (');
+    expect(start).toBeGreaterThan(-1);
+    const inner = CARD_SRC.slice(start);
+    expect(inner.indexOf('<PaperTexture')).toBeLessThan(inner.indexOf('{children}'));
+  });
+});
 
 describe('drop highlight: only Now and Done tint', () => {
   it('never tints Next up or Left while dragging in', () => {
@@ -40,10 +54,22 @@ describe('hero carries the mini timeline', () => {
   it('renders the timeline with a red now-marker', () => {
     expect(TIMELINE_SRC).toContain('NOW_RED');
     expect(TIMELINE_SRC).toContain('dayTimelineSegments');
-    expect(TIMELINE_SRC).toContain('timelinePct');
     expect(TIMELINE_SRC).toContain('nowPill');
     expect(TIMELINE_SRC).toContain('nowLine');
     expect(TIMELINE_SRC).toContain('nowDot');
+  });
+
+  it('is zoomed, draggable, centred on now, labels close under the bar', () => {
+    // Zoomed strip (72dp/hour) in a horizontal ScrollView, centred on
+    // now on first appearance; the hour labels sit directly under the
+    // bar instead of far above it.
+    expect(TIMELINE_SRC).toContain('PX_PER_HOUR = 72');
+    expect(TIMELINE_SRC).toContain('<ScrollView');
+    expect(TIMELINE_SRC).toContain('horizontal');
+    expect(TIMELINE_SRC).toContain('centerOnNow');
+    expect(TIMELINE_SRC).toContain('nowX - viewportW.current / 2');
+    expect(TIMELINE_SRC).toContain('labelsRow');
+    expect(TIMELINE_SRC).not.toContain('styles.labels}');
   });
 });
 
