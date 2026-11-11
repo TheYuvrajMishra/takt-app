@@ -12,10 +12,11 @@
 // "+" customize action) falls back to the earliest free slot.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, useWindowDimensions, View, type ScrollViewInstance } from 'react-native';
+import { useFocusEffect } from 'expo-router';
 import { Text, TextInput } from '../../components/TText';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
-import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
+import Animated, { runOnJS, useAnimatedStyle, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import {
   DEFAULT_CATEGORIES,
@@ -107,6 +108,41 @@ function nowMinutes(): number {
   return n.getHours() * 60 + n.getMinutes();
 }
 
+/** One hour row: its height follows the live hour height on the UI
+    thread, so a pinch stretches the grid with no React re-render. */
+function HourRow({ hourHeightSV, h }: { hourHeightSV: SharedValue<number>; h: number }) {
+  const rowStyle = useAnimatedStyle(() => ({ height: hourHeightSV.value }));
+  return (
+    <Animated.View style={[styles.hourRow, rowStyle]}>
+      <View style={styles.hourLabelWrap}>
+        <Text style={styles.hourLabel}>{minToTime(h * 60)}</Text>
+      </View>
+      <View style={styles.hourLine} />
+    </Animated.View>
+  );
+}
+
+/** The "now" line: its top follows the live hour height on the UI thread. */
+function NowLine({
+  hourHeightSV,
+  nowMin,
+  left,
+  width,
+}: {
+  hourHeightSV: SharedValue<number>;
+  nowMin: number;
+  left: number;
+  width: number;
+}) {
+  const lineStyle = useAnimatedStyle(() => ({ top: (nowMin / 60) * hourHeightSV.value }));
+  return (
+    <Animated.View pointerEvents="none" style={[styles.nowLine, { left, width }, lineStyle]}>
+      <View style={styles.nowPin} />
+      <Text style={styles.nowLabel}>{minToTime(nowMin)}</Text>
+    </Animated.View>
+  );
+}
+
 export default function CalendarScreen() {
   const insets = useSafeAreaInsets();
   const bottomInset = useBottomInset();
@@ -180,7 +216,6 @@ export default function CalendarScreen() {
 
   const hourHeightRef = useRef(hourHeight);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const didScrollRef = useRef(false);
   // Auto-scroll while dragging near the grid's top/bottom edge.
   const scrollYRef = useRef(0);
   const viewportHRef = useRef(0);
@@ -188,8 +223,18 @@ export default function CalendarScreen() {
   // Guards applyTemplate against a double-tap: without it, two overlapping
   // applies would nest into one undo batch and one Undo would revert both.
   const applyingTemplate = useRef(false);
-  const baseH = useSharedValue(savedHourHeight);
-  const lastPinchH = useSharedValue(savedHourHeight);
+  // Live hour height (UI thread): the pinch writes this every frame and
+  // the grid (rows, now-line, blocks, container height) reads it on the
+  // UI thread — no setState during a pinch, so no re-render per frame.
+  // React state commits only on pinch end (commitZoom); this effect then
+  // snaps the shared value to the rounded, persisted value.
+  const hourHeightSV = useSharedValue(savedHourHeight);
+  // Hour height at pinch start (the scale multiplies from here).
+  const pinchBaseH = useSharedValue(savedHourHeight);
+
+  useEffect(() => {
+    hourHeightSV.value = hourHeight;
+  }, [hourHeight, hourHeightSV]);
 
   useEffect(() => {
     hourHeightRef.current = hourHeight;
@@ -245,17 +290,6 @@ export default function CalendarScreen() {
     [],
   );
 
-  // Scroll to "now" on first mount.
-  useEffect(() => {
-    if (didScrollRef.current) return;
-    didScrollRef.current = true;
-    const t = setTimeout(() => {
-      scrollRef.current?.scrollTo({ y: Math.max(0, (nowMin / 60 - 1.5) * 64), animated: false });
-    }, 350);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -281,6 +315,30 @@ export default function CalendarScreen() {
   const anchorKey = dateKey(anchor);
   const todayKey = dateKey(new Date());
   const selecting = selected.length > 0;
+
+  // Land on "now" every time the Calendar tab opens — the old effect
+  // ran once on mount (when the user was still on Today, since tab
+  // screens stay mounted), so the grid sat at the start of the day.
+  // Only when viewing today: another day keeps its own place. Fired
+  // twice because the grid may not be laid out on the first pass.
+  useFocusEffect(
+    useCallback(() => {
+      if (anchorKey !== todayKey) return;
+      const target = Math.max(0, (nowMinutes() / 60 - 1.5) * hourHeightRef.current);
+      const t1 = setTimeout(
+        () => scrollRef.current?.scrollTo({ y: target, animated: false }),
+        150,
+      );
+      const t2 = setTimeout(
+        () => scrollRef.current?.scrollTo({ y: target, animated: false }),
+        500,
+      );
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
+    }, [anchorKey, todayKey]),
+  );
 
   const stepSize = view === 'day' ? 1 : view === '3day' ? 3 : 7;
   const step = useCallback(
@@ -1084,21 +1142,21 @@ export default function CalendarScreen() {
   // with the v2 Gesture.Simultaneous used by this file and the rest of
   // the app; the deprecated call still works in the installed version.)
   const nativeScroll = Gesture.Native();
+  // Smooth pinch: the gesture writes ONLY the shared value (continuous,
+  // clamped, no rounding) and the grid reads it on the UI thread — the
+  // old pinch called setHourHeight on every frame, re-rendering the whole
+  // calendar per frame (plus a /2×2 rounding step), which is what made it
+  // tacky. React state commits once, on pinch end, via commitZoom.
   const pinch = Gesture.Pinch()
     .onBegin(() => {
-      baseH.value = hourHeightRef.current;
-      lastPinchH.value = hourHeightRef.current;
+      pinchBaseH.value = hourHeightSV.value;
     })
     .onUpdate((e) => {
-      const v = Math.round(clamp(baseH.value * e.scale, MIN_HOUR_H, MAX_HOUR_H) / 2) * 2;
-      if (v !== lastPinchH.value) {
-        lastPinchH.value = v;
-        runOnJS(setHourHeight)(v);
-      }
+      hourHeightSV.value = clamp(pinchBaseH.value * e.scale, MIN_HOUR_H, MAX_HOUR_H);
     })
     .onEnd(() => {
       // Persist the zoom so tiny blocks stay readable next time.
-      runOnJS(commitZoom)(lastPinchH.value);
+      runOnJS(commitZoom)(hourHeightSV.value);
     });
 
   const twoFinger = Gesture.Pan()
@@ -1119,19 +1177,14 @@ export default function CalendarScreen() {
 
   // ---- render helpers ----------------------------------------------------
   const stripDates = Array.from({ length: 7 }, (_, i) => addDays(anchor, i - 3));
-  const contentHeight = HOURS * hourHeight;
+  // Grid + column-separator height, driven by the live hour height on
+  // the UI thread (same shared value the pinch writes).
+  const gridHeightStyle = useAnimatedStyle(() => ({ height: HOURS * hourHeightSV.value }));
 
   const renderHourRows = () => {
     const rows = [];
     for (let h = 0; h < HOURS; h++) {
-      rows.push(
-        <View key={h} style={[styles.hourRow, { height: hourHeight }]}>
-          <View style={styles.hourLabelWrap}>
-            <Text style={styles.hourLabel}>{minToTime(h * 60)}</Text>
-          </View>
-          <View style={styles.hourLine} />
-        </View>,
-      );
+      rows.push(<HourRow key={h} hourHeightSV={hourHeightSV} h={h} />);
     }
     return rows;
   };
@@ -1154,7 +1207,7 @@ export default function CalendarScreen() {
             left={GUTTER + colIdx * colW + 4 + lane * laneW}
             width={laneW - 2}
             height={height}
-            hourHeight={hourHeight}
+            hourHeightSV={hourHeightSV}
             magnetEdges={magnetEdges}
             selected={selected.includes(block.id)}
             onInteractionStart={() => setScrollEnabled(false)}
@@ -1178,15 +1231,13 @@ export default function CalendarScreen() {
   const renderNowLine = () => {
     const colIdx = visibleDates.findIndex((d) => dateKey(d) === todayKey);
     if (colIdx < 0) return null;
-    const top = (nowMin / 60) * hourHeight;
     return (
-      <View
-        pointerEvents="none"
-        style={[styles.nowLine, { top, left: GUTTER + colIdx * colW, width: colW }]}
-      >
-        <View style={styles.nowPin} />
-        <Text style={styles.nowLabel}>{minToTime(nowMin)}</Text>
-      </View>
+      <NowLine
+        hourHeightSV={hourHeightSV}
+        nowMin={nowMin}
+        left={GUTTER + colIdx * colW}
+        width={colW}
+      />
     );
   };
 
@@ -1314,19 +1365,19 @@ export default function CalendarScreen() {
             }}
           >
             <GestureDetector gesture={backgroundLongPress}>
-              <View ref={gridRef} style={{ width: width, height: contentHeight }}>
+              <Animated.View ref={gridRef} style={[{ width: width }, gridHeightStyle]}>
                 {renderHourRows()}
                 {visibleDates.map((_, i) => (
-                  <View
+                  <Animated.View
                     key={`sep-${i}`}
                     pointerEvents="none"
-                    style={[styles.colSep, { left: GUTTER + i * colW, height: contentHeight }]}
+                    style={[styles.colSep, { left: GUTTER + i * colW }, gridHeightStyle]}
                   />
                 ))}
                 {renderBlocks()}
                 {renderNowLine()}
                 {renderGhost()}
-              </View>
+              </Animated.View>
             </GestureDetector>
           </ScrollScreen>
         </GestureDetector>

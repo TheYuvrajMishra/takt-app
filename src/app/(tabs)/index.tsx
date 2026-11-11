@@ -1,9 +1,10 @@
 // Takt — Today screen (default home, center-aligned).
-// Greeting + live clock, butter hero with the discipline score so far today,
-// current task front and center, big Done button, timeline strip, and the
-// Now / Next up / Left / Done sections. Tapping a block opens a sheet whose
-// edits are scoped "Today only". Uses Worker A's real store
-// (src/store/useStore.ts) — no stub: the store landed before this screen.
+// Butter hero with the discipline score so far today, a mini timeline of
+// today's blocks with a red now-marker, current task front and center,
+// big Done button, timeline strip, and the Now / Next up / Left / Done
+// sections. Tapping a block opens a sheet whose edits are scoped "Today
+// only". Uses Worker A's real store (src/store/useStore.ts) — no stub:
+// the store landed before this screen.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Text, TextInput } from '../../components/TText';
@@ -16,6 +17,7 @@ import {
   dateKey,
   disciplineScore,
   earliestEmptySlot,
+  fmtHoursMin,
   minToTime,
 } from '../../lib/core';
 import { computeStreaks, daysFromStore } from '../../lib/stats';
@@ -33,15 +35,9 @@ import { RadialMenu } from '../../components/RadialMenu';
 import { useRadialDrag } from '../../components/useRadialDrag';
 import { EndOfDaySheet } from '../../components/EndOfDaySheet';
 import { CategoryIcon } from '../../components/CategoryIcon';
+import { MiniTimeline } from '../../components/MiniTimeline';
 import { formatSize, useUpdaterStore } from '../../lib/updater';
-
-function greetingFor(hour: number): string {
-  if (hour < 5) return 'Up late';
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  if (hour < 21) return 'Good evening';
-  return 'Good night';
-}
+import Svg, { Line, Rect } from 'react-native-svg';
 
 function fmtRemaining(mins: number): string {
   if (mins < 60) return `${mins} min left`;
@@ -93,7 +89,9 @@ export default function TodayScreen() {
   const stripWidthRef = useRef(0);
   const summaryShownRef = useRef(false);
   // Drop-target highlight while a category is being dragged in from the
-  // dock or the radial: the section under the finger tints butter.
+  // dock or the radial: only Now and Done tint. A drop always creates in
+  // the earliest empty slot, so tinting Next up / Left promised a
+  // placement the drop never makes.
   const [highlightedSection, setHighlightedSection] = useState<string | null>(null);
   const sectionLayoutsRef = useRef(new Map<string, { y: number; height: number }>());
   const scrollYRef = useRef(0);
@@ -148,6 +146,19 @@ export default function TodayScreen() {
   const next = blocks.find((b) => !isResolved(b) && b.startMin > nowMin);
   const heroBlock = current ?? next ?? null;
   const heroCategory = heroBlock ? categoryById.get(heroBlock.categoryId) : undefined;
+  // Hours line for the hero: completed vs planned minutes today.
+  const totalMin = blocks.reduce((s, b) => s + b.durationMin, 0);
+  const doneMin = blocks.reduce(
+    (s, b) => (getCompletion(b.id, today)?.status === 'complete' ? s + b.durationMin : s),
+    0,
+  );
+  // Date pill inside the hero card ("Tue, 10 Nov") — the timing lives in
+  // the card, there is no separate greeting/clock text above it.
+  const datePill = now.toLocaleDateString(undefined, {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  });
 
   const nowBlocks = blocks.filter(
     (b) => !isResolved(b) && b.startMin <= nowMin && nowMin < blockEnd(b),
@@ -215,9 +226,12 @@ export default function TodayScreen() {
 
   // Finger position while a category is being dragged in (from the dock
   // or after a radial dwell): move the ghost and tint the section under
-  // the finger. Section layouts are content-relative, so the finger's
-  // page Y is converted with the scroll offset; the ScrollScreen starts
-  // at insets.top + 8 (the root's paddingTop).
+  // the finger — Now and Done only. Next up / Left never tint: the drop
+  // always creates in the earliest empty slot, so tinting them promised
+  // a placement the drop never makes. Section layouts are
+  // content-relative, so the finger's page Y is converted with the
+  // scroll offset; the ScrollScreen starts at insets.top + 8 (the root's
+  // paddingTop).
   const handleDragMove = useCallback(
     (x: number, y: number) => {
       ghostX.value = x;
@@ -230,7 +244,8 @@ export default function TodayScreen() {
           break;
         }
       }
-      setHighlightedSection((prev) => (prev === found ? prev : found));
+      const tintable = found === 'now' || found === 'done' ? found : null;
+      setHighlightedSection((prev) => (prev === tintable ? prev : tintable));
     },
     [ghostX, ghostY, insets.top],
   );
@@ -320,13 +335,6 @@ export default function TodayScreen() {
     ? `${minToTime(firstTomorrow.startMin)} — ${firstTomorrow.title}`
     : 'Nothing scheduled yet';
 
-  const clock = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-  const dateLine = now.toLocaleDateString(undefined, {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-  });
-
   const dragGhostStyle = useAnimatedStyle(() => ({
     transform: [
       { translateX: ghostX.value - 56 },
@@ -345,21 +353,34 @@ export default function TodayScreen() {
           scrollYRef.current = e.nativeEvent.contentOffset.y;
         }}
       >
-        {/* Greeting + live clock */}
-        <Text style={styles.greeting}>{greetingFor(now.getHours())}</Text>
-        <Text style={styles.clock}>{clock}</Text>
-        <Text style={styles.dateLine}>{dateLine}</Text>
-
         {/* Update banner (Fix 6): calm, non-blocking, never interrupts a
             task or a drag — just a row that opens the update sheet. */}
         <UpdateBanner />
 
-        {/* Hero: discipline score + current task + Done */}
+        {/* Hero: discipline score + today's timeline + current task + Done.
+            The timing lives inside this card (date pill, hours line, mini
+            timeline) — no separate greeting/clock text above it. */}
         <Card color={colors.butter} style={styles.hero}>
-          <Text style={styles.heroLabel}>Discipline so far today</Text>
+          <View style={styles.heroTop}>
+            <Text style={styles.heroToday}>TODAY</Text>
+            <View style={styles.datePill}>
+              <Svg width={14} height={14} viewBox="0 0 24 24">
+                <Rect x="4" y="5.5" width="16" height="14.5" rx="2.5" fill="none" stroke={colors.carbon} strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" />
+                <Line x1="4" y1="10" x2="20" y2="10" stroke={colors.carbon} strokeWidth={1.75} strokeLinecap="round" />
+                <Line x1="8.5" y1="3" x2="8.5" y2="7" stroke={colors.carbon} strokeWidth={1.75} strokeLinecap="round" />
+                <Line x1="15.5" y1="3" x2="15.5" y2="7" stroke={colors.carbon} strokeWidth={1.75} strokeLinecap="round" />
+              </Svg>
+              <Text style={styles.datePillText}>{datePill}</Text>
+            </View>
+          </View>
+          <Text style={styles.heroTitle}>Discipline so far</Text>
           <Text style={styles.score}>
             {blocks.length === 0 ? '—' : `${score}%`}
           </Text>
+          <Text style={styles.hoursLine}>
+            {fmtHoursMin(doneMin)} of {fmtHoursMin(totalMin)}
+          </Text>
+          <MiniTimeline blocks={blocks} nowMin={nowMin} categoryById={categoryById} />
           {heroBlock ? (
             <>
               <View style={styles.heroDivider} />
@@ -796,27 +817,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     alignItems: 'center',
   },
-  greeting: {
-    fontFamily: fonts.medium,
-    fontSize: 17,
-    color: colors.carbon,
-    textAlign: 'center',
+  hero: { width: '100%', paddingVertical: spacing.lg },
+  heroTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
-  clock: {
-    fontFamily: fonts.regular,
-    fontSize: 64,
-    lineHeight: 72,
-    color: colors.carbon,
-    textAlign: 'center',
+  heroToday: { fontFamily: fonts.semibold, fontSize: 14, letterSpacing: 3, color: colors.carbon },
+  datePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: hairline,
+    borderRadius: radii.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
   },
-  dateLine: {
-    fontFamily: fonts.medium,
-    fontSize: 14,
-    color: colors.carbon,
-    opacity: 0.55,
-    textAlign: 'center',
-    marginBottom: spacing.lg,
-  },
+  datePillText: { fontFamily: fonts.medium, fontSize: 13, color: colors.carbon },
+  heroTitle: { fontFamily: fonts.semibold, fontSize: 30, lineHeight: 36, color: colors.carbon, marginTop: spacing.md },
+  hoursLine: { fontFamily: fonts.medium, fontSize: 15, color: colors.carbon, opacity: 0.6, marginTop: 2 },
   updateBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -829,8 +849,6 @@ const styles = StyleSheet.create({
   },
   updateBannerText: { fontFamily: fonts.medium, fontSize: 14, color: colors.carbon },
   updateBannerAction: { fontFamily: fonts.semibold, fontSize: 14, color: colors.carbon },
-  hero: { width: '100%', alignItems: 'center', paddingVertical: spacing.lg },
-  heroLabel: { fontFamily: fonts.medium, fontSize: 14, color: colors.carbon, opacity: 0.6 },
   score: { fontFamily: fonts.regular, fontSize: 110, lineHeight: 118, color: colors.carbon },
   heroDivider: { width: '100%', height: 1, backgroundColor: hairline, marginVertical: spacing.md },
   heroTaskRow: { flexDirection: 'row', alignItems: 'center', gap: 12, width: '100%' },
@@ -847,7 +865,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   doneButton: { marginTop: spacing.lg, width: '100%' },
-  secondaryRow: { flexDirection: 'row', gap: 10, marginTop: spacing.sm },
+  secondaryRow: { flexDirection: 'row', gap: 10, marginTop: spacing.sm, alignSelf: 'center' },
   secondaryButton: {
     backgroundColor: colors.paper,
     borderWidth: 1,

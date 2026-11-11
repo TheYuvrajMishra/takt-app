@@ -17,7 +17,13 @@ import { useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Text } from '../TText';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+  type SharedValue,
+} from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import type { Block } from '../../types';
 import { categoryColorHex, colors, fonts, shadows } from '../../theme/tokens';
@@ -34,7 +40,11 @@ export interface BlockCardProps {
   left: number;
   width: number;
   height: number;
-  hourHeight: number;
+  /** Live hour height (UI thread): the card's top/height and the
+      drag/resize px↔min conversions read this, so a pinch moves the card
+      without a single React re-render. The plain top/height props are the
+      initial render + the variant bucket only. */
+  hourHeightSV: SharedValue<number>;
   /** Start positions the dragged block may magnetically snap to. */
   magnetEdges: number[];
   selected: boolean;
@@ -88,7 +98,7 @@ export function BlockCard(props: BlockCardProps) {
     left,
     width,
     height,
-    hourHeight,
+    hourHeightSV,
     magnetEdges,
     onInteractionStart,
     onInteractionEnd,
@@ -173,7 +183,7 @@ export function BlockCard(props: BlockCardProps) {
     })
     .onUpdate((e) => {
       if (mode.value === MODE_RESIZE_END) {
-        const raw = blockDurationMin + (e.translationY / hourHeight) * 60;
+        const raw = blockDurationMin + (e.translationY / hourHeightSV.value) * 60;
         const d = snap5(Math.max(15, Math.min(24 * 60 - blockStartMin, raw)));
         if (d !== lastDur.value) {
           lastDur.value = d;
@@ -184,7 +194,7 @@ export function BlockCard(props: BlockCardProps) {
       }
       if (mode.value === MODE_RESIZE_START) {
         const maxStart = blockStartMin + blockDurationMin - 15;
-        const s = snap5(Math.max(0, Math.min(maxStart, blockStartMin + (e.translationY / hourHeight) * 60)));
+        const s = snap5(Math.max(0, Math.min(maxStart, blockStartMin + (e.translationY / hourHeightSV.value) * 60)));
         const d = blockDurationMin - (s - blockStartMin);
         if (s !== lastTopStart.value || d !== lastTopDur.value) {
           lastTopStart.value = s;
@@ -196,7 +206,7 @@ export function BlockCard(props: BlockCardProps) {
       }
       if (mode.value === MODE_MOVE) {
         ty.value = e.translationY;
-        const raw = blockStartMin + (e.translationY / hourHeight) * 60;
+        const raw = blockStartMin + (e.translationY / hourHeightSV.value) * 60;
         let s = snap5(Math.max(0, Math.min(24 * 60 - blockDurationMin, raw)));
         for (const edge of magnet.value) {
           if (Math.abs(s - edge) <= 8) {
@@ -246,6 +256,12 @@ export function BlockCard(props: BlockCardProps) {
   const composed = Gesture.Exclusive(Gesture.Simultaneous(hold, pan), tap);
 
   const animatedStyle = useAnimatedStyle(() => ({
+    // Position + size follow the live hour height on the UI thread, so a
+    // pinch moves and stretches the card with no React re-render. The
+    // plain top/height in the style below are the initial render only —
+    // this animated style comes later in the array, so it wins.
+    top: (blockStartMin / 60) * hourHeightSV.value,
+    height: Math.max(28, (blockDurationMin / 60) * hourHeightSV.value),
     transform: [{ translateY: ty.value }, { scale: 1 + 0.03 * lift.value }],
     // Resting shadow (soft) that deepens while lifted — the card reads as
     // paper sitting on the page, not a flat fill.

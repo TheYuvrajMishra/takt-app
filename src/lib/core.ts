@@ -100,3 +100,56 @@ export function defaultDoNotNudgeFor(
     settings.doNotNudgeCategoryIds.includes(categoryId)
   );
 }
+
+/** "3 h 05 min" — hours + zero-padded minutes, for the hero hours line. */
+export function fmtHoursMin(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `${h} h ${String(m).padStart(2, '0')} min`;
+}
+
+/** Day span for the hero mini timeline: first block start → last block end. */
+export function timelineRange(blocks: Block[]): { start: number; end: number } | null {
+  if (blocks.length === 0) return null;
+  const start = Math.min(...blocks.map((b) => b.startMin));
+  const end = Math.max(...blocks.map((b) => blockEnd(b)));
+  return end > start ? { start, end } : null;
+}
+
+export interface TimelineSegment {
+  /** minutes from midnight */
+  startMin: number;
+  endMin: number;
+  /** category id for a block segment; undefined = a free gap */
+  categoryId?: string;
+}
+
+/** Non-overlapping segments tiling [start, end): blocks in category
+ * colour, free gaps left empty. Overlapping later blocks are clamped to
+ * the previous end; fully covered blocks are dropped. */
+export function dayTimelineSegments(
+  blocks: Block[],
+  start: number,
+  end: number,
+): TimelineSegment[] {
+  const sorted = [...blocks].sort((a, b) => a.startMin - b.startMin);
+  const segs: TimelineSegment[] = [];
+  let t = start;
+  for (const b of sorted) {
+    const s = Math.max(b.startMin, start);
+    const e = Math.min(blockEnd(b), end);
+    if (e <= s) continue;
+    if (s > t) segs.push({ startMin: t, endMin: s });
+    if (e <= t) continue;
+    segs.push({ startMin: Math.max(s, t), endMin: e, categoryId: b.categoryId });
+    t = e;
+  }
+  if (t < end) segs.push({ startMin: t, endMin: end });
+  return segs;
+}
+
+/** Position of a minute inside [start, end] as 0..1 (clamped). */
+export function timelinePct(min: number, start: number, end: number): number {
+  if (end <= start) return 0;
+  return Math.max(0, Math.min(1, (min - start) / (end - start)));
+}

@@ -5,14 +5,18 @@ import { DEFAULT_SETTINGS } from '../../types';
 import {
   blockEnd,
   dateKey,
+  dayTimelineSegments,
   defaultDoNotNudgeFor,
   disciplineScore,
   earliestEmptySlot,
+  fmtHoursMin,
   isInQuietHours,
   minToTime,
   nudgeTimes,
   overlaps,
   snap5,
+  timelinePct,
+  timelineRange,
 } from '../core';
 
 function block(
@@ -167,5 +171,56 @@ describe('defaultDoNotNudgeFor', () => {
   it('nudges when neither default covers the category', () => {
     const s = { ...DEFAULT_SETTINGS };
     expect(defaultDoNotNudgeFor(s, 'cat-job')).toBe(false);
+  });
+});
+
+describe('fmtHoursMin', () => {
+  it('formats hours and zero-padded minutes', () => {
+    expect(fmtHoursMin(0)).toBe('0 h 00 min');
+    expect(fmtHoursMin(185)).toBe('3 h 05 min');
+    expect(fmtHoursMin(480)).toBe('8 h 00 min');
+  });
+});
+
+describe('timelineRange / dayTimelineSegments / timelinePct', () => {
+  it('returns null with no blocks', () => {
+    expect(timelineRange([])).toBeNull();
+  });
+
+  it('spans first start to last end', () => {
+    const blocks = [block('a', 540, 60), block('b', 840, 25)];
+    expect(timelineRange(blocks)).toEqual({ start: 540, end: 865 });
+  });
+
+  it('tiles blocks and free gaps without overlap', () => {
+    const blocks = [block('a', 540, 60), block('b', 660, 30)];
+    const segs = dayTimelineSegments(blocks, 540, 690);
+    expect(segs).toEqual([
+      { startMin: 540, endMin: 600, categoryId: 'cat-job' },
+      { startMin: 600, endMin: 660 },
+      { startMin: 660, endMin: 690, categoryId: 'cat-job' },
+    ]);
+  });
+
+  it('clamps an overlapping later block to the previous end', () => {
+    const blocks = [block('a', 540, 120), block('b', 600, 60)];
+    const segs = dayTimelineSegments(blocks, 540, 720);
+    expect(segs).toEqual([
+      { startMin: 540, endMin: 660, categoryId: 'cat-job' },
+      { startMin: 660, endMin: 720 },
+    ]);
+  });
+
+  it('drops a block fully covered by an earlier one', () => {
+    const blocks = [block('a', 540, 180), block('b', 560, 30)];
+    const segs = dayTimelineSegments(blocks, 540, 720);
+    expect(segs).toEqual([{ startMin: 540, endMin: 720, categoryId: 'cat-job' }]);
+  });
+
+  it('positions a minute inside the range, clamped', () => {
+    expect(timelinePct(630, 540, 720)).toBeCloseTo(0.5);
+    expect(timelinePct(0, 540, 720)).toBe(0);
+    expect(timelinePct(1440, 540, 720)).toBe(1);
+    expect(timelinePct(600, 600, 600)).toBe(0);
   });
 });
