@@ -51,25 +51,30 @@ describe('hero carries the mini timeline', () => {
     expect(INDEX_SRC).toContain('fmtHoursMin(doneMin)');
   });
 
-  it('renders the timeline with a red now-marker', () => {
+  it('renders the timeline with a red centre marker', () => {
     expect(TIMELINE_SRC).toContain('NOW_RED');
     expect(TIMELINE_SRC).toContain('dayTimelineSegments');
-    expect(TIMELINE_SRC).toContain('nowPill');
-    expect(TIMELINE_SRC).toContain('nowLine');
-    expect(TIMELINE_SRC).toContain('nowDot');
+    expect(TIMELINE_SRC).toContain('centerPill');
+    expect(TIMELINE_SRC).toContain('centerLine');
+    expect(TIMELINE_SRC).toContain('centerDot');
   });
 
-  it('is zoomed, draggable, centred on now, labels close under the bar', () => {
-    // Zoomed strip (72dp/hour) in a horizontal ScrollView, centred on
-    // now on first appearance; the hour labels sit directly under the
-    // bar instead of far above it.
-    expect(TIMELINE_SRC).toContain('PX_PER_HOUR = 72');
+  it('is a zoomed full-day strip, fixed centre marker, dynamic edge times', () => {
+    // Zoomed strip (300dp/hour, about one hour per viewport) spanning
+    // the whole day so the user can swipe to day end; the red marker is
+    // fixed at the viewport centre and the strip slides under it; the
+    // only time labels are the visible window's start and end, updating
+    // from the scroll offset.
+    expect(TIMELINE_SRC).toContain('PX_PER_HOUR = 300');
+    expect(TIMELINE_SRC).toContain('DAY_MIN = 24 * 60');
     expect(TIMELINE_SRC).toContain('<ScrollView');
     expect(TIMELINE_SRC).toContain('horizontal');
     expect(TIMELINE_SRC).toContain('centerOnNow');
     expect(TIMELINE_SRC).toContain('nowX - viewportW.current / 2');
-    expect(TIMELINE_SRC).toContain('labelsRow');
-    expect(TIMELINE_SRC).not.toContain('styles.labels}');
+    expect(TIMELINE_SRC).toContain('edgeLabels');
+    expect(TIMELINE_SRC).toContain('windowStartMin');
+    expect(TIMELINE_SRC).toContain('windowEndMin');
+    expect(TIMELINE_SRC).toContain("left: '50%'");
   });
 });
 
@@ -95,10 +100,42 @@ describe('smooth pinch: shared value only, no setState per frame', () => {
 });
 
 describe('calendar lands on now when opened', () => {
-  it('scrolls to now on focus, only when viewing today', () => {
+  it('scrolls to now on focus and on content layout, only when viewing today', () => {
+    // The single mount-time scroll never fired (tab screens stay
+    // mounted), and the two focus timers could fire before layout, so
+    // the grid sat at day start. Now: a scrollToNow that only marks
+    // itself done when the scroll actually runs, fired on focus (three
+    // passes) and when the content size is first known, with the flag
+    // reset on blur so it re-lands every time the tab opens.
     expect(CAL_SRC).toContain('useFocusEffect');
+    expect(CAL_SRC).toContain('const scrollToNow = useCallback');
     expect(CAL_SRC).toContain('if (anchorKey !== todayKey) return;');
     expect(CAL_SRC).toContain('(nowMinutes() / 60 - 1.5) * hourHeightRef.current');
+    expect(CAL_SRC).toContain('scrolledToNowRef');
+    expect(CAL_SRC).toContain('onContentSizeChange');
     expect(CAL_SRC).not.toContain('didScrollRef');
+  });
+});
+
+describe('day change slides like a page turn', () => {
+  it('slides the grid in from the direction of travel on any anchor change', () => {
+    expect(CAL_SRC).toContain('dayShiftX = useSharedValue(0)');
+    expect(CAL_SRC).toContain('gridShiftStyle');
+    expect(CAL_SRC).toContain('transform: [{ translateX: dayShiftX.value }]');
+    expect(CAL_SRC).toContain('dayShiftX.value = dir * width;');
+    expect(CAL_SRC).toContain("withTiming(0, { duration: 250, easing: DECEL })");
+  });
+
+  it('follows the finger on a two-finger swipe, slides out, then steps', () => {
+    const start = CAL_SRC.indexOf('const twoFinger = Gesture.Pan()');
+    expect(start).toBeGreaterThan(-1);
+    const end = CAL_SRC.indexOf('const outerGestures', start);
+    const block = CAL_SRC.slice(start, end);
+    expect(block).toContain('.onUpdate((e) => {');
+    expect(block).toContain('dayShiftX.value = clamp(e.translationX, -width, width);');
+    expect(block).toContain('withTiming(-width, { duration: 150, easing: DECEL }');
+    expect(block).toContain('withTiming(width, { duration: 150, easing: DECEL }');
+    expect(block).toContain('runOnJS(step)(1)');
+    expect(block).toContain('runOnJS(step)(-1)');
   });
 });

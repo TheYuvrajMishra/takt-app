@@ -16,7 +16,8 @@ import { useFocusEffect } from 'expo-router';
 import { Text, TextInput } from '../../components/TText';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
-import Animated, { runOnJS, useAnimatedStyle, useSharedValue, type SharedValue } from 'react-native-reanimated';
+import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming, type SharedValue } from 'react-native-reanimated';
+import { DECEL } from '../../theme/motion';
 import * as Haptics from 'expo-haptics';
 import {
   DEFAULT_CATEGORIES,
@@ -236,6 +237,16 @@ export default function CalendarScreen() {
     hourHeightSV.value = hourHeight;
   }, [hourHeight, hourHeightSV]);
 
+  // Day-change slide: the grid translates horizontally so a day change
+  // feels like a snappy page turn instead of a jump. dayShiftX is 0 at
+  // rest; the two-finger swipe drives it with the finger, and every
+  // anchor change slides the new day in from the direction of travel
+  // (see the anchor effect below).
+  const dayShiftX = useSharedValue(0);
+  const gridShiftStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: dayShiftX.value }],
+  }));
+
   useEffect(() => {
     hourHeightRef.current = hourHeight;
   }, [hourHeight]);
@@ -319,26 +330,49 @@ export default function CalendarScreen() {
   // Land on "now" every time the Calendar tab opens — the old effect
   // ran once on mount (when the user was still on Today, since tab
   // screens stay mounted), so the grid sat at the start of the day.
-  // Only when viewing today: another day keeps its own place. Fired
-  // twice because the grid may not be laid out on the first pass.
+  // Only when viewing today: another day keeps its own place. The
+  // scroll fires on focus (three passes, in case the layout lags) AND
+  // when the content size is first known, and the flag resets on blur
+  // so it re-lands every time the tab opens.
+  const scrolledToNowRef = useRef(false);
+  const scrollToNow = useCallback(() => {
+    if (anchorKey !== todayKey) return;
+    const ref = scrollRef.current;
+    if (!ref) return;
+    const target = Math.max(0, (nowMinutes() / 60 - 1.5) * hourHeightRef.current);
+    ref.scrollTo({ y: target, animated: false });
+    scrolledToNowRef.current = true;
+  }, [anchorKey, todayKey]);
+
   useFocusEffect(
     useCallback(() => {
-      if (anchorKey !== todayKey) return;
-      const target = Math.max(0, (nowMinutes() / 60 - 1.5) * hourHeightRef.current);
-      const t1 = setTimeout(
-        () => scrollRef.current?.scrollTo({ y: target, animated: false }),
-        150,
-      );
-      const t2 = setTimeout(
-        () => scrollRef.current?.scrollTo({ y: target, animated: false }),
-        500,
-      );
+      scrolledToNowRef.current = false;
+      const t1 = setTimeout(scrollToNow, 150);
+      const t2 = setTimeout(scrollToNow, 500);
+      const t3 = setTimeout(scrollToNow, 1200);
       return () => {
         clearTimeout(t1);
         clearTimeout(t2);
+        clearTimeout(t3);
+        scrolledToNowRef.current = false;
       };
-    }, [anchorKey, todayKey]),
+    }, [scrollToNow]),
   );
+
+  // Slide the new day in from the direction of travel whenever the
+  // anchor changes (buttons, date strip, Today, two-finger swipe).
+  // The grid is off-screen on the far side while the dates swap, so
+  // the user sees one continuous page turn, not a jump. Skipped on
+  // mount (no previous anchor).
+  const prevAnchorKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevAnchorKeyRef.current;
+    prevAnchorKeyRef.current = anchorKey;
+    if (!prev || prev === anchorKey) return;
+    const dir = anchorKey > prev ? 1 : -1;
+    dayShiftX.value = dir * width;
+    dayShiftX.value = withTiming(0, { duration: 250, easing: DECEL });
+  }, [anchorKey, dayShiftX, width]);
 
   const stepSize = view === 'day' ? 1 : view === '3day' ? 3 : 7;
   const step = useCallback(
@@ -1162,9 +1196,25 @@ export default function CalendarScreen() {
   const twoFinger = Gesture.Pan()
     .minPointers(2)
     .maxPointers(2)
+    .onUpdate((e) => {
+      // Tactile: the grid follows the finger while swiping between days.
+      dayShiftX.value = clamp(e.translationX, -width, width);
+    })
     .onEnd((e) => {
-      if (e.translationX < -60) runOnJS(step)(1);
-      else if (e.translationX > 60) runOnJS(step)(-1);
+      if (e.translationX < -60) {
+        // Slide out left, then step to the next day — the anchor effect
+        // slides the new day in from the right.
+        dayShiftX.value = withTiming(-width, { duration: 150, easing: DECEL }, (finished) => {
+          if (finished) runOnJS(step)(1);
+        });
+      } else if (e.translationX > 60) {
+        dayShiftX.value = withTiming(width, { duration: 150, easing: DECEL }, (finished) => {
+          if (finished) runOnJS(step)(-1);
+        });
+      } else {
+        // Short swipe: snap back to the current day.
+        dayShiftX.value = withTiming(0, { duration: 200, easing: DECEL });
+      }
     });
 
   const outerGestures = Gesture.Simultaneous(pinch, twoFinger, nativeScroll);
@@ -1363,9 +1413,14 @@ export default function CalendarScreen() {
             onLayout={(e) => {
               viewportHRef.current = e.nativeEvent.layout.height;
             }}
+            onContentSizeChange={() => {
+              // Content laid out: land on now if this focus session
+              // hasn't yet (the focus timers may have fired too early).
+              if (!scrolledToNowRef.current) scrollToNow();
+            }}
           >
             <GestureDetector gesture={backgroundLongPress}>
-              <Animated.View ref={gridRef} style={[{ width: width }, gridHeightStyle]}>
+              <Animated.View ref={gridRef} style={[{ width: width }, gridHeightStyle, gridShiftStyle]}>
                 {renderHourRows()}
                 {visibleDates.map((_, i) => (
                   <Animated.View

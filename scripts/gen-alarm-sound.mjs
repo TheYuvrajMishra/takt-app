@@ -1,24 +1,26 @@
 // Generate Takt's alarm sound: a clear two-tone alarm (880 / 1174 Hz
 // beeps) as a 16-bit mono WAV. Written to assets/sounds/alarm.wav.
 // Run: node scripts/gen-alarm-sound.mjs
+// The alarm is LONG (~12s of repeating beeps, not one short blip):
+// a nudge must sound like a real alarm that keeps demanding attention
+// until the user presses Start or Done on the notification. iOS caps
+// notification sounds at 30s, so 12s is safe.
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SAMPLE_RATE = 22050;
-// [frequency Hz, duration s] — two-tone beeps with short gaps.
-const PATTERN = [
+// One two-tone cycle (~0.74s), repeated so the alarm keeps ringing.
+const CYCLE = [
   [880, 0.28],
   [0, 0.09],
   [1174, 0.28],
   [0, 0.09],
-  [880, 0.28],
-  [0, 0.09],
-  [1174, 0.28],
-  [0, 0.09],
-  [880, 0.45],
 ];
+const REPEATS = 15;
+// [frequency Hz, duration s] — two-tone beeps with short gaps.
+const PATTERN = [...Array(REPEATS).fill(CYCLE).flat(), [880, 0.45]];
 const AMPLITUDE = 0.65;
 
 const totalSamples = Math.round(

@@ -71,6 +71,8 @@ export default function TodayScreen() {
   const getBlocksForDate = useStore((s) => s.getBlocksForDate);
   const getCompletion = useStore((s) => s.getCompletion);
   const markDone = useStore((s) => s.markDone);
+  const markNotDone = useStore((s) => s.markNotDone);
+  const undo = useStore((s) => s.undo);
   const markStarted = useStore((s) => s.markStarted);
   const addBlock = useStore((s) => s.addBlock);
   const moveBlock = useStore((s) => s.moveBlock);
@@ -595,12 +597,15 @@ export default function TodayScreen() {
             </View>
 
             <BigButton
-              label={sheetStatus === 'complete' ? 'Done' : 'Mark done'}
+              label={sheetStatus === 'complete' ? 'Mark as not done' : 'Mark done'}
               onPress={() => {
-                void markDone(sheetBlock.id, today);
+                if (sheetStatus === 'complete') {
+                  void markNotDone(sheetBlock.id, today);
+                } else {
+                  void markDone(sheetBlock.id, today);
+                }
                 setSheetBlock(null);
               }}
-              disabled={sheetStatus === 'complete'}
               style={styles.sheetPrimary}
             />
 
@@ -669,10 +674,24 @@ export default function TodayScreen() {
         firstTaskTomorrow={firstTaskTomorrow}
       />
 
-      {/* Toast */}
+      {/* Toast — a Done carries an Undo, so a mistaken tap is one tap back. */}
       {toastMsg ? (
         <View style={[styles.toast, { top: insets.top + 8 }]} pointerEvents="none">
-          <Text style={styles.toastText}>{toastMsg}</Text>
+          <View style={styles.toastRow}>
+            <Text style={styles.toastText}>{toastMsg}</Text>
+            {toastMsg === 'Done. Nice work.' ? (
+              <Pressable
+                pointerEvents="auto"
+                hitSlop={8}
+                onPress={() => {
+                  void undo();
+                  setToastMsg(null);
+                }}
+              >
+                <Text style={styles.toastUndo}>Undo</Text>
+              </Pressable>
+            ) : null}
+          </View>
         </View>
       ) : null}
     </View>
@@ -965,4 +984,6 @@ const styles = StyleSheet.create({
     zIndex: 80,
   },
   toastText: { fontFamily: fonts.medium, fontSize: 14, color: colors.paper },
+  toastRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  toastUndo: { fontFamily: fonts.semibold, fontSize: 14, color: colors.butter },
 });

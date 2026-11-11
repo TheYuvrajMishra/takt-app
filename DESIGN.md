@@ -29,6 +29,26 @@
 - Heatmap: mono ramp via hatch density; category colors only when a filter is active.
 - Every edit asks scope: "Today only" / "From today onwards" (Calendar adds "This weekday from today" under More). Today mode defaults to Today only.
 - Undo/redo with toast on every edit.
+- A Done is undoable two ways: the Done toast carries an Undo button
+  (one tap back, within the toast's life), and a done block's sheet
+  offers "Mark as not done" (clears the completion, nudges return).
+- Hero timeline (MiniTimeline): the WHOLE day (00:00–24:00) as a zoomed
+  strip (~1 hour per viewport), draggable to day end. The red marker is
+  FIXED at the viewport centre — the strip slides under it; the pill
+  shows the time under the marker. The only time labels are the visible
+  window's start and end (below the bar), updating as you swipe.
+- Calendar day change slides like a page turn: the grid follows the
+  finger on a two-finger swipe (slides out past 60dp, snaps back under
+  it), and every anchor change (buttons, date strip, Today, swipe)
+  slides the new day in from the direction of travel (250ms, DECEL).
+- Calendar lands on now every time the tab opens (focus + content-size
+  triggers, only when viewing today); another day keeps its own place.
+- Nudge alarm: a long (~12s) repeating two-tone alarm, not one blip.
+  The notification carries Done / Start / Snooze actions — Start stops
+  the start-nudge (only the end wrap-up remains), Done cancels that
+  block-date's nudges. The notification's small icon is a monochrome
+  white clock (`assets/notification-icon.png`); Android renders a
+  full-colour app icon as a blob, so the notification icon is separate.
 
 ## Layout rules (Fix 3 — the navbar overlap must never come back)
 - ONE layout contract: `src/components/layout.tsx` (`LayoutProvider`,

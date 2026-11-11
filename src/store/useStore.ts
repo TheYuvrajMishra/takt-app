@@ -276,6 +276,8 @@ export interface TaktState {
   deleteBlock: (blockId: string, date: string, scope: Scope) => Promise<void>;
 
   markDone: (blockId: string, date: string) => Promise<void>;
+  /** Clear a completion (undo a mistaken Done, at any time). */
+  markNotDone: (blockId: string, date: string) => Promise<void>;
   markStarted: (blockId: string, date: string) => Promise<void>;
   snooze: (blockId: string, date: string, minutes?: number) => Promise<void>;
   skip: (blockId: string, date: string) => Promise<void>;
@@ -911,6 +913,22 @@ export const useStore = create<TaktState>()((set, get) => {
         startedAt: prev?.startedAt,
       });
       emitToast('Done. Nice work.');
+      notifyAfterChange();
+    },
+
+    markNotDone: async (blockId, date) => {
+      // No-op guard BEFORE pushUndo: clearing a completion that does
+      // not exist must not plant a phantom undo entry (and wipe redo).
+      if (!get().getCompletion(blockId, date)) return;
+      pushUndo();
+      await db.deleteCompletion(blockId, date);
+      set((s) => ({
+        completions: s.completions.filter(
+          (c) => !(c.blockId === blockId && c.date === date),
+        ),
+      }));
+      emitToast('Marked as not done.');
+      // The block is open again, so its nudges come back.
       notifyAfterChange();
     },
 
