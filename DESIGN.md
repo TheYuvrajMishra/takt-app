@@ -238,3 +238,11 @@
   shows "Now" (butter), not "In progress" — only an actual Start is
   progress. Onboarding is 6 steps; the "Build your first day" sandbox is
   removed.
+
+- Notification diagnostics: Settings now has a "Notifications" section
+  showing permission, channel, scheduled nudge count, and the next
+  nudge. A denied permission silently schedules zero nudges
+  (rescheduleIfPermitted returns 0), so the cause of "no notifications
+  at all" is now visible instead of guessed at. The section has an
+  "Allow notifications" button (re-prompts, or opens system settings
+  when already denied) and a Refresh status button.

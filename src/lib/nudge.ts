@@ -567,10 +567,64 @@ export function registerNudgeResponseListener(
   });
 }
 
-/** Fire one test nudge (for Settings / debugging). Scheduled 1s out
- * through the real nudge channel — an immediate (trigger: null) nudge
- * lands on Android's default channel, so it would play the default
- * sound and carry no actions, and would not test the real nudge at all. */
+/** Live notification diagnostics for Settings: permission, the nudge
+ * channel, and what is actually scheduled. This is how a "no
+ * notifications at all" report gets pinned down instead of guessed at —
+ * a denied permission silently schedules zero nudges, and nothing else
+ * in the app surfaces that. */
+export interface NotificationStatus {
+  /** expo-notifications permission status. */
+  permission: string;
+  /** Whether the nudge channel exists (Android). */
+  channelExists: boolean;
+  /** The channel's sound, if the channel exists (null = silenced). */
+  channelSound: string | null;
+  /** How many Takt nudges are currently scheduled on the device. */
+  scheduledCount: number;
+  /** The next scheduled nudge, if any. */
+  nextNudge: { title: string; fireAt: Date } | null;
+}
+
+export async function getNotificationStatus(): Promise<NotificationStatus> {
+  const perm = await Notifications.getPermissionsAsync();
+  let channelExists = false;
+  let channelSound: string | null = null;
+  try {
+    const ch = await Notifications.getNotificationChannelAsync(NUDGE_CHANNEL_ID);
+    if (ch) {
+      channelExists = true;
+      channelSound = typeof ch.sound === 'string' ? ch.sound : null;
+    }
+  } catch {
+    // iOS has no channels.
+  }
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+  const takt = scheduled.filter((n) => n.identifier.startsWith('takt-'));
+  const sorted = [...takt].sort(
+    (a, b) =>
+      (a.trigger && typeof a.trigger === 'object' && 'date' in a.trigger
+        ? new Date(a.trigger.date as number | string).getTime()
+        : 0) -
+      (b.trigger && typeof b.trigger === 'object' && 'date' in b.trigger
+        ? new Date(b.trigger.date as number | string).getTime()
+        : 0),
+  );
+  const next = sorted[0];
+  const nextFireAt =
+    next?.trigger && typeof next.trigger === 'object' && 'date' in next.trigger
+      ? new Date(next.trigger.date as number | string)
+      : null;
+  return {
+    permission: perm.status,
+    channelExists,
+    channelSound,
+    scheduledCount: takt.length,
+    nextNudge:
+      next && nextFireAt
+        ? { title: next.content.title ?? 'Takt nudge', fireAt: nextFireAt }
+        : null,
+  };
+}
 export async function testNudgeNow(title = 'Takt test'): Promise<string> {
   const fireAt = new Date(Date.now() + 1000);
   return Notifications.scheduleNotificationAsync({

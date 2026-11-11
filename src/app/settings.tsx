@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Switch, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, Switch, View } from 'react-native';
 import { Text } from '../components/TText';
 import { useRouter } from 'expo-router';
 import { ScrollScreen } from '../components/layout';
@@ -7,7 +7,13 @@ import { colors, fonts, hairline, radii, spacing } from '../theme/tokens';
 import { DEFAULT_CATEGORIES, type Settings } from '../types';
 import { CategoryIcon } from '../components/CategoryIcon';
 import { mergeBackupSettings } from '../lib/backup';
-import { testNudgeNow } from '../lib/nudge';
+import {
+  getNotificationStatus,
+  requestNudgePermissions,
+  reschedule,
+  testNudgeNow,
+  type NotificationStatus,
+} from '../lib/nudge';
 import { useStore } from '../store/useStore';
 import {
   formatSize,
@@ -101,6 +107,16 @@ export default function SettingsScreen() {
   const storeCategories = useStore((s) => s.categories);
   const lastToast = useStore((s) => s.lastToast);
   const [toast, setToast] = useState<string | null>(null);
+  // Notification diagnostics: permission, channel, and what is actually
+  // scheduled. A denied permission silently schedules zero nudges, so
+  // this is the first thing to check when nothing arrives.
+  const [notifStatus, setNotifStatus] = useState<NotificationStatus | null>(null);
+  const refreshNotifStatus = () => {
+    void getNotificationStatus()
+      .then(setNotifStatus)
+      .catch(() => setNotifStatus(null));
+  };
+  useEffect(refreshNotifStatus, []);
   // Test notification: fires a real nudge (alarm sound + Done/Start
   // actions) 1s out, so the user can check notifications actually work.
   const [testSent, setTestSent] = useState(false);
@@ -127,22 +143,6 @@ export default function SettingsScreen() {
 
   const patch = (p: Partial<Settings>) => {
     void updateSettings(p);
-  };
-
-  const testNudgeNow = async () => {
-    try {
-      // Dynamic import so a nudge-engine failure never breaks this screen.
-      const nudgePath = '../lib/nudge';
-      const mod = (await import(nudgePath)) as { testNudgeNow?: () => Promise<void> | void };
-      if (typeof mod.testNudgeNow === 'function') {
-        await mod.testNudgeNow();
-        showToast('Test nudge sent.');
-      } else {
-        showToast('nudge engine wiring pending');
-      }
-    } catch {
-      showToast('nudge engine wiring pending');
-    }
   };
 
   const backup = async () => {
@@ -246,6 +246,58 @@ export default function SettingsScreen() {
   return (
     <ScrollScreen chrome="none" contentContainerStyle={styles.content}>
       <Text style={styles.title}>Settings</Text>
+
+      <Text style={styles.sectionTitle}>Notifications</Text>
+      <View style={styles.card}>
+        <Text style={styles.rowLabel}>
+          Permission: {notifStatus ? notifStatus.permission : 'checking…'}
+        </Text>
+        {notifStatus?.permission !== 'granted' ? (
+          <Text style={styles.hint}>
+            Notifications are off, so no nudge can fire — not even a test one.
+            Allow them, then come back here.
+          </Text>
+        ) : null}
+        <Text style={styles.rowLabel}>
+          Channel: {notifStatus ? (notifStatus.channelExists ? `yes${notifStatus.channelSound ? ` (${notifStatus.channelSound})` : ' (silenced)'}` : 'missing') : 'checking…'}
+        </Text>
+        <Text style={styles.rowLabel}>
+          Scheduled nudges: {notifStatus ? String(notifStatus.scheduledCount) : 'checking…'}
+        </Text>
+        <Text style={styles.rowLabel}>
+          Next nudge:{' '}
+          {notifStatus?.nextNudge
+            ? `${notifStatus.nextNudge.title} at ${notifStatus.nextNudge.fireAt.toLocaleString()}`
+            : notifStatus
+              ? 'none scheduled'
+              : 'checking…'}
+        </Text>
+        <View style={styles.divider} />
+        <Pressable
+          style={styles.testButton}
+          onPress={() => {
+            void (async () => {
+              const granted = await requestNudgePermissions();
+              if (!granted) {
+                // Already denied once: the system will not prompt again,
+                // so send the user to the app's system settings instead.
+                await Linking.openSettings();
+                return;
+              }
+              await reschedule();
+              refreshNotifStatus();
+              showToast('Notifications on — nudges rescheduled.');
+            })().catch(() => showToast('Could not enable notifications.'));
+          }}
+        >
+          <Text style={styles.testButtonText}>
+            {notifStatus?.permission === 'granted' ? 'Notifications on' : 'Allow notifications'}
+          </Text>
+        </Pressable>
+        <Pressable style={styles.testButton} onPress={refreshNotifStatus}>
+          <Text style={styles.testButtonText}>Refresh status</Text>
+        </Pressable>
+      </View>
 
       <Text style={styles.sectionTitle}>Nudges</Text>
       <View style={styles.card}>
@@ -374,7 +426,14 @@ export default function SettingsScreen() {
         />
       </View>
 
-      <Pressable style={styles.primaryButton} onPress={testNudgeNow}>
+      <Pressable
+        style={styles.primaryButton}
+        onPress={() => {
+          void testNudgeNow()
+            .then(() => showToast('Test nudge sent.'))
+            .catch(() => showToast('Test nudge failed to send.'));
+        }}
+      >
         <Text style={styles.primaryButtonText}>Test nudge now</Text>
       </Pressable>
 
