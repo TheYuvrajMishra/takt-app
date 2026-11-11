@@ -31,28 +31,21 @@ export const statusColors = {
 export const radii = { card: 32, cardSm: 28, pill: 999, sheet: 36 } as const;
 
 /**
- * Realistic shadows: carbon-tinted, never grey. A card gets TWO — a large
- * soft ambient plus a tight contact shadow — layered by nesting two
- * views (see Card): one shadow per view is all the platform gives us,
- * so the pair is what makes the lift read as real. Smaller surfaces
- * (chips, pills, blocks at rest) take a single soft one.
+ * Shadows: carbon-tinted, never grey. A card takes ONE balanced shadow
+ * (`card`) — the old two-shadow nesting (a large ambient on an outer
+ * shell plus a tight contact on an inner shell, same fill) drew a dark
+ * line just inside the card edge and let the inner shell shrink-wrap to
+ * half width. Smaller surfaces (chips, pills, blocks at rest) take a
+ * single soft one.
  */
 export const shadows = {
-  /** Large soft ambient: the card floating above the page. */
-  ambient: {
+  /** One balanced shadow for a card: reads as lift, no inner dark line. */
+  card: {
     shadowColor: colors.carbon,
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.07,
-    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.1,
+    shadowRadius: 20,
     elevation: 4,
-  },
-  /** Tight contact: the card's edge meeting the surface. */
-  contact: {
-    shadowColor: colors.carbon,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 3,
-    elevation: 1,
   },
   /** Single soft shadow for small surfaces at rest (blocks, pills). */
   soft: {

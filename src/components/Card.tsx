@@ -1,12 +1,16 @@
 // Takt — Card. Paper (white) raised card only; cloud is the app background,
 // never a card fill (DESIGN.md).
 //
-// Realistic shadow: TWO shadows, layered by nesting — a large soft ambient
-// on the outer shell plus a tight contact shadow on the inner card (one
-// shadow per view is all the platform gives us, so the pair is what makes
-// the lift read as real). Both shells are paper; the inner covers the
-// outer exactly, so only the shadows show. A subtle paper grain sits on
-// top of the fill (translucent, so text stays crisp through it).
+// ONE view, ONE shadow. The old Card nested two shells with the same fill
+// — an outer ambient shadow plus an inner contact shadow — and that is
+// what broke the hero: the inner shadow drew a dark line just inside the
+// card edge (a glitched look on a same-colour fill), and the caller's
+// alignItems: center made the inner shell shrink-wrap to its content,
+// rendering the hero at half width. A single view carries the fill, the
+// padding, the grain and one balanced shadow, so the caller's width and
+// alignment land on the same view and the card is full width. A subtle
+// paper grain sits on top of the fill (translucent, so text stays crisp
+// through it).
 import type { ReactNode } from 'react';
 import type { PressableProps, ViewStyle } from 'react-native';
 import { Pressable, StyleSheet, View } from 'react-native';
@@ -25,7 +29,7 @@ export interface CardProps {
 }
 
 export function Card({ children, color = colors.paper, radius = radii.card, style, onPress, testID }: CardProps) {
-  const shellStyle = { backgroundColor: color, borderRadius: radius };
+  const cardStyle = { backgroundColor: color, borderRadius: radius };
   const inner = (
     <>
       {children}
@@ -34,33 +38,30 @@ export function Card({ children, color = colors.paper, radius = radii.card, styl
   );
   if (onPress) {
     return (
-      <View testID={testID} style={[styles.ambient, shellStyle, style]}>
-        <Pressable
-          onPress={onPress}
-          style={({ pressed }) => [
-            styles.contact,
-            shellStyle,
-            { opacity: pressed ? 0.92 : 1 },
-          ]}
-        >
-          {inner}
-        </Pressable>
-      </View>
+      <Pressable
+        testID={testID}
+        onPress={onPress}
+        style={({ pressed }) => [
+          styles.card,
+          cardStyle,
+          { opacity: pressed ? 0.92 : 1 },
+          style,
+        ]}
+      >
+        {inner}
+      </Pressable>
     );
   }
   return (
-    <View testID={testID} style={[styles.ambient, shellStyle, style]}>
-      <View style={[styles.contact, shellStyle]}>{inner}</View>
+    <View testID={testID} style={[styles.card, cardStyle, style]}>
+      {inner}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  ambient: {
-    ...shadows.ambient,
-  },
-  contact: {
-    ...shadows.contact,
+  card: {
+    ...shadows.card,
     padding: 20,
   },
 });

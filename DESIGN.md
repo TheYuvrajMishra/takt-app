@@ -13,10 +13,11 @@
 - Film grain: Skia noise or tiled PNG at ~4–6% opacity over whole app.
 - Paper texture: cards carry the grain tile inside them (`PaperTexture`,
   5% on `Card`, 4% on calendar blocks) — a subtle paper feel, not a
-  pattern. Realistic shadows are LAYERED (`shadows` in tokens): a large
-  soft ambient + a tight contact shadow, nested two views deep (`Card`
-  does this; small surfaces take the single `soft` shadow, lifted ones
-  `lifted`). Carbon-tinted, never grey.
+  pattern. Shadows are single and carbon-tinted, never grey: a card takes
+  one balanced `card` shadow (`Card` is ONE view — the old two-shell
+  nesting drew a dark line inside the edge and shrink-wrapped the hero to
+  half width); small surfaces take the single `soft` shadow, lifted ones
+  `lifted`.
 - Hatch: 45° diagonal stripes for "unfilled"/upcoming segments and hatched card accents.
 - Icons: custom SVG, 1.75px stroke, rounded caps, carbon stroke on color fill.
 - NO emoji anywhere (UI, notifications, copy).
