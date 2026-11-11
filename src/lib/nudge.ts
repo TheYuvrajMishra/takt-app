@@ -408,16 +408,18 @@ export function reschedule(): Promise<number> {
 /**
  * Schedule-first rebuild: schedule the fresh plan (an identifier that is
  * already scheduled is replaced in place), then cancel only the
- * identifiers the plan no longer wants. The old cancel-all-first order
- * left the device with zero nudges if the process died mid-loop.
- * A failure mid-loop still leaves the previous window largely intact,
- * and the next mutation / foreground event retries.
+ * identifiers the plan no longer wants. The plan is sorted by fire time,
+ * so the soonest nudge is scheduled first — the critical one lands on
+ * the device within milliseconds of the task being created, even if the
+ * app is closed a second later. The old order fetched all scheduled
+ * notifications FIRST (a slow read), so closing the app mid-rebuild
+ * left the new block with no nudge at all. A failure mid-loop still
+ * leaves the previous window largely intact, and the next mutation /
+ * foreground event retries.
  */
 async function doReschedule(): Promise<number> {
   const plan = planFromStore(new Date());
   const plannedIds = new Set(plan.map((p) => p.identifier));
-  const previouslyScheduled =
-    await Notifications.getAllScheduledNotificationsAsync();
   for (const item of plan) {
     const copy = copyForPlanItem(item);
     await Notifications.scheduleNotificationAsync({
@@ -442,6 +444,10 @@ async function doReschedule(): Promise<number> {
       },
     });
   }
+  // Cancel stale identifiers only after the fresh plan is scheduled, so
+  // a crash mid-loop never leaves the device with zero nudges.
+  const previouslyScheduled =
+    await Notifications.getAllScheduledNotificationsAsync();
   for (const n of previouslyScheduled) {
     if (n.identifier.startsWith('takt-') && !plannedIds.has(n.identifier)) {
       await Notifications.cancelScheduledNotificationAsync(n.identifier);

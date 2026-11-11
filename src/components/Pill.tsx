@@ -7,13 +7,15 @@ import { colors, fonts, radii, statusColors } from '../theme/tokens';
 import { Hatch } from './Hatch';
 import type { BlockStatus } from '../types';
 
-export type PillStatus = Exclude<BlockStatus, 'skipped'>;
+export type PillStatus = Exclude<BlockStatus, 'skipped'> | 'now';
 
 const DEFAULT_LABELS: Record<PillStatus, string> = {
   complete: 'Complete',
   progress: 'In progress',
   missed: 'Missed',
   upcoming: 'Upcoming',
+  // The block's time is now, but the user has not pressed Start.
+  now: 'Now',
 };
 
 export interface PillProps {

@@ -52,7 +52,9 @@ function statusFor(block: Block, entry: CompletionEntry | undefined, nowMin: num
   if (entry?.status === 'skipped') return 'upcoming';
   const end = blockEnd(block);
   if (end <= nowMin) return 'missed';
-  if (block.startMin <= nowMin) return 'progress';
+  // The window is active but the user never pressed Start — that is
+  // "Now", not "In progress". Only an actual Start makes it progress.
+  if (block.startMin <= nowMin) return 'now';
   return 'upcoming';
 }
 

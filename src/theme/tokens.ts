@@ -26,6 +26,9 @@ export const statusColors = {
   progress: colors.apricot,
   missed: colors.carbon,
   upcoming: colors.cloud, // hatched cloud
+  // 'Now': the block's time window is active but the user has not pressed
+  // Start yet — distinct from 'progress' (they started it).
+  now: colors.butter,
 } as const;
 
 export const radii = { card: 32, cardSm: 28, pill: 999, sheet: 36 } as const;

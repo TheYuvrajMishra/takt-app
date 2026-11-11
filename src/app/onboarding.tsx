@@ -1,44 +1,30 @@
-import { useRef, useState, type ReactNode } from 'react';
-import { Linking, PanResponder, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useState, type ReactNode } from 'react';
+import { Linking, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import Animated, { FadeInUp } from 'react-native-reanimated';
 import { ScrollScreen } from '../components/layout';
 import { Text, TextInput } from '../components/TText';
 import { useRouter } from 'expo-router';
 import * as Notifications from 'expo-notifications';
-import * as Haptics from 'expo-haptics';
 import { colors, fonts, hairline, radii, spacing, tracking, categoryColorHex } from '../theme/tokens';
 import { DEFAULT_CATEGORIES, type Category, type Settings } from '../types';
-import { dateKey, earliestEmptySlot, minToTime, snap5 } from '../lib/core';
+import { dateKey, minToTime } from '../lib/core';
 import { CategoryIcon } from '../components/CategoryIcon';
 import { useStore } from '../store/useStore';
 import { requestNudgePermissions, rescheduleIfPermitted, testNudgeNow } from '../lib/nudge';
 
 // On finish, `settings.onboardingDone` is persisted through the store and
 // the root layout's onboarding gate stops redirecting here.
-// Steps 3–4 (category picks, sandbox timeline) are still local state:
-// the sandbox is explicitly "nothing is saved yet", and there is no store
-// field for the picked-category set. Step 7 schedules a real block.
+// Step 3 (category picks) is still local state: there is no store field
+// for the picked-category set. Step 6 schedules a real block.
 
 export function shouldShowOnboarding(settings: Settings): boolean {
   return !settings.onboardingDone;
 }
 
-const TOTAL_STEPS = 7;
-
-interface MiniBlock {
-  id: string;
-  categoryId: string;
-  title: string;
-  startMin: number;
-  durationMin: number;
-}
+const TOTAL_STEPS = 6;
 
 const TL_START = 7 * 60;
 const TL_END = 21 * 60;
-const TL_HEIGHT = 420;
-const PX_PER_MIN = TL_HEIGHT / (TL_END - TL_START);
-
-const RADIAL_CATS = ['cat-food', 'cat-workout', 'cat-learning', 'cat-journaling', 'cat-study'];
 
 export default function OnboardingScreen({ onDone }: { onDone?: () => void }) {
   const router = useRouter();
@@ -72,21 +58,11 @@ export default function OnboardingScreen({ onDone }: { onDone?: () => void }) {
   const [pickedCats, setPickedCats] = useState<string[]>(DEFAULT_CATEGORIES.map((c) => c.id));
   const [renamingId, setRenamingId] = useState<string | null>(null);
 
-  // Step 4 — guided sandbox timeline (local state only)
-  const [miniBlocks, setMiniBlocks] = useState<MiniBlock[]>([
-    { id: 'mb-1', categoryId: 'cat-workout', title: 'Morning run', startMin: 7 * 60, durationMin: 30 },
-    { id: 'mb-2', categoryId: 'cat-food', title: 'Breakfast', startMin: 8 * 60, durationMin: 30 },
-  ]);
-  const [selectedBlockId, setSelectedBlockId] = useState<string>('mb-1');
-  const [radialOpen, setRadialOpen] = useState(false);
-  const [scope, setScope] = useState<'today' | 'onwards'>('today');
-  const dragStartMin = useRef(0);
-
-  // Step 5
+  // Step 4
   const [nudgeSent, setNudgeSent] = useState(false);
   const [demoDone, setDemoDone] = useState(false);
 
-  // Step 7
+  // Step 6
   const [firstTaskCat, setFirstTaskCat] = useState('cat-learning');
   const [firstTaskStart, setFirstTaskStart] = useState(9 * 60);
   const [firstTaskScheduled, setFirstTaskScheduled] = useState(false);
@@ -145,74 +121,6 @@ export default function OnboardingScreen({ onDone }: { onDone?: () => void }) {
       // user retries instead of trusting a nudge that never fired.
       setNudgeSent(false);
     }
-  };
-
-  // --- Step 4 helpers -------------------------------------------------------
-  const selectedBlock = miniBlocks.find((b) => b.id === selectedBlockId) ?? miniBlocks[0];
-
-  const dragResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onPanResponderGrant: () => {
-        dragStartMin.current = miniBlocks[0]?.startMin ?? TL_START;
-      },
-      onPanResponderMove: (_e, gs) => {
-        const next = snap5(dragStartMin.current + Math.round(gs.dy / PX_PER_MIN));
-        const clamped = Math.max(TL_START, Math.min(TL_END - 30, next));
-        setMiniBlocks((prev) =>
-          prev.map((b) => (b.id === miniBlocks[0]?.id ? { ...b, startMin: clamped } : b)),
-        );
-      },
-      onPanResponderRelease: () => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
-      },
-    }),
-  ).current;
-
-  const addBlockFromRadial = (categoryId: string) => {
-    const cat = cats.find((c) => c.id === categoryId);
-    if (!cat) return;
-    const blocks = miniBlocks.map((b) => ({
-      id: b.id,
-      categoryId: b.categoryId,
-      title: b.title,
-      startMin: b.startMin,
-      durationMin: b.durationMin,
-    }));
-    const slot = earliestEmptySlot(blocks, TL_START, 30);
-    const start = slot ?? TL_START;
-    const block: MiniBlock = {
-      id: `mb-${Date.now()}`,
-      categoryId,
-      title: cat.name,
-      startMin: start,
-      durationMin: 30,
-    };
-    setMiniBlocks((prev) => [...prev, block]);
-    setSelectedBlockId(block.id);
-    setRadialOpen(false);
-  };
-
-  const resizeSelected = (delta: number) => {
-    if (!selectedBlock) return;
-    setMiniBlocks((prev) =>
-      prev.map((b) =>
-        b.id === selectedBlock.id
-          ? { ...b, durationMin: Math.max(10, Math.min(120, b.durationMin + delta)) }
-          : b,
-      ),
-    );
-  };
-
-  const moveSelected = (delta: number) => {
-    if (!selectedBlock) return;
-    setMiniBlocks((prev) =>
-      prev.map((b) =>
-        b.id === selectedBlock.id
-          ? { ...b, startMin: Math.max(TL_START, Math.min(TL_END - b.durationMin, b.startMin + delta)) }
-          : b,
-      ),
-    );
   };
 
   if (done) {
@@ -355,109 +263,6 @@ export default function OnboardingScreen({ onDone }: { onDone?: () => void }) {
 
         {step === 4 && (
           <>
-            <Text style={styles.title}>Build your first day</Text>
-            <Text style={styles.body}>
-              This is a sandbox — nothing is saved yet. Drag the first block up or down, tap a
-              block to resize it, and open the radial to add one.
-            </Text>
-
-            <View style={styles.timeline}>
-              {miniBlocks.map((b, idx) => {
-                const cat = cats.find((c) => c.id === b.categoryId);
-                const top = (b.startMin - TL_START) * PX_PER_MIN;
-                const height = Math.max(28, b.durationMin * PX_PER_MIN);
-                const isFirst = idx === 0;
-                const isSelected = b.id === selectedBlockId;
-                return (
-                  <View
-                    key={b.id}
-                    style={[
-                      styles.node,
-                      { top, height, backgroundColor: cat ? categoryColorHex[cat.color] : colors.cloud },
-                      isSelected && styles.nodeSelected,
-                    ]}
-                    {...(isFirst ? dragResponder.panHandlers : {})}
-                  >
-                    <Pressable
-                      onPress={() => setSelectedBlockId(b.id)}
-                      style={styles.nodeInner}
-                      accessibilityLabel={`${b.title} at ${minToTime(b.startMin)}`}
-                    >
-                      <Text style={styles.nodeTitle}>{b.title}</Text>
-                      <Text style={styles.nodeTime}>
-                        {minToTime(b.startMin)} · {b.durationMin} min
-                      </Text>
-                    </Pressable>
-                  </View>
-                );
-              })}
-              {radialOpen && (
-                <View style={styles.radial}>
-                  {RADIAL_CATS.map((id, i) => {
-                    const cat = cats.find((c) => c.id === id);
-                    if (!cat) return null;
-                    const angle = (Math.PI * (i + 0.5)) / RADIAL_CATS.length - Math.PI / 2;
-                    const x = Math.cos(angle) * 86;
-                    const y = Math.sin(angle) * 86;
-                    return (
-                      <Pressable
-                        key={id}
-                        onPress={() => addBlockFromRadial(id)}
-                        style={[styles.radialItem, { left: 90 + x, top: 90 + y }]}
-                        accessibilityLabel={`Add ${cat.name}`}
-                      >
-                        <CategoryIcon icon={cat.icon} color={cat.color} size={26} />
-                        <Text style={styles.radialLabel}>{cat.name}</Text>
-                      </Pressable>
-                    );
-                  })}
-                  <Pressable style={styles.radialCenter} onPress={() => setRadialOpen(false)}>
-                    <Text style={styles.radialCenterText}>Close</Text>
-                  </Pressable>
-                </View>
-              )}
-            </View>
-
-            <View style={styles.controlsRow}>
-              <Pressable style={styles.smallButton} onPress={() => setRadialOpen((v) => !v)}>
-                <Text style={styles.smallButtonText}>{radialOpen ? 'Close radial' : 'Add via radial'}</Text>
-              </Pressable>
-              <Pressable style={styles.smallButton} onPress={() => moveSelected(-15)}>
-                <Text style={styles.smallButtonText}>Earlier</Text>
-              </Pressable>
-              <Pressable style={styles.smallButton} onPress={() => moveSelected(15)}>
-                <Text style={styles.smallButtonText}>Later</Text>
-              </Pressable>
-            </View>
-            <View style={styles.controlsRow}>
-              <Pressable style={styles.smallButton} onPress={() => resizeSelected(-5)}>
-                <Text style={styles.smallButtonText}>Shorter</Text>
-              </Pressable>
-              <Pressable style={styles.smallButton} onPress={() => resizeSelected(5)}>
-                <Text style={styles.smallButtonText}>Longer</Text>
-              </Pressable>
-            </View>
-
-            <Text style={styles.scopeLabel}>When this changes, apply it to:</Text>
-            <View style={styles.scopeRow}>
-              <Pressable
-                style={[styles.scopeButton, scope === 'today' && styles.scopeButtonActive]}
-                onPress={() => setScope('today')}
-              >
-                <Text style={[styles.scopeText, scope === 'today' && styles.scopeTextActive]}>Today only</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.scopeButton, scope === 'onwards' && styles.scopeButtonActive]}
-                onPress={() => setScope('onwards')}
-              >
-                <Text style={[styles.scopeText, scope === 'onwards' && styles.scopeTextActive]}>From today onwards</Text>
-              </Pressable>
-            </View>
-          </>
-        )}
-
-        {step === 5 && (
-          <>
             <Text style={styles.title}>Meet the nudge</Text>
             <Text style={styles.body}>
               When a block starts and you have not marked it done, Takt taps you — every few
@@ -481,7 +286,7 @@ export default function OnboardingScreen({ onDone }: { onDone?: () => void }) {
           </>
         )}
 
-        {step === 6 && (
+        {step === 5 && (
           <>
             <Text style={styles.title}>Where things live</Text>
             <Text style={styles.body}>
@@ -541,7 +346,7 @@ export default function OnboardingScreen({ onDone }: { onDone?: () => void }) {
           </>
         )}
 
-        {step === 7 && (
+        {step === 6 && (
           <>
             <Text style={styles.title}>One last thing</Text>
             <Text style={styles.body}>
@@ -670,31 +475,7 @@ const styles = StyleSheet.create({
   checkMark: { color: colors.paper, fontSize: 14, fontWeight: '700' },
   catName: { fontFamily: fonts.medium, fontSize: 16, color: colors.carbon },
   renameInput: { fontFamily: fonts.medium, fontSize: 16, color: colors.carbon, borderBottomWidth: 1, borderBottomColor: hairline, paddingVertical: 2, minWidth: 140 },
-  timeline: {
-    height: TL_HEIGHT,
-    backgroundColor: colors.paper,
-    borderRadius: radii.cardSm,
-    position: 'relative',
-    overflow: 'hidden',
-    marginBottom: spacing.md,
-  },
-  node: { position: 'absolute', left: 12, right: 12, borderRadius: 16, padding: 10 },
-  nodeSelected: { borderWidth: 2, borderColor: colors.carbon },
-  nodeInner: { flex: 1 },
-  nodeTitle: { fontFamily: fonts.semibold, fontSize: 15, color: colors.carbon },
-  nodeTime: { fontFamily: fonts.medium, fontSize: 13, color: colors.carbon, opacity: 0.7 },
-  radial: { position: 'absolute', left: '50%', top: '50%', width: 220, height: 220, marginLeft: -110, marginTop: -110 },
-  radialItem: { position: 'absolute', width: 56, height: 56, marginLeft: -28, marginTop: -28, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.paper, borderRadius: 999, borderWidth: 1, borderColor: hairline },
-  radialLabel: { fontFamily: fonts.medium, fontSize: 11, color: colors.carbon },
-  radialCenter: { position: 'absolute', left: 90, top: 90, width: 40, height: 40, marginLeft: -20, marginTop: -20, backgroundColor: colors.carbon, borderRadius: 999, alignItems: 'center', justifyContent: 'center' },
-  radialCenterText: { fontFamily: fonts.medium, fontSize: 11, color: colors.paper },
   controlsRow: { flexDirection: 'row', gap: 8, marginBottom: 8, alignItems: 'center' },
-  scopeLabel: { fontFamily: fonts.medium, fontSize: 14, color: colors.carbon, marginTop: spacing.sm, marginBottom: 8 },
-  scopeRow: { flexDirection: 'row', gap: 8 },
-  scopeButton: { flex: 1, borderRadius: radii.pill, borderWidth: 1, borderColor: hairline, backgroundColor: colors.paper, paddingVertical: 12, alignItems: 'center' },
-  scopeButtonActive: { backgroundColor: colors.carbon, borderColor: colors.carbon },
-  scopeText: { fontFamily: fonts.medium, fontSize: 14, color: colors.carbon },
-  scopeTextActive: { color: colors.paper },
   nudgeCard: { backgroundColor: colors.butter, borderRadius: radii.card, padding: spacing.lg, marginBottom: spacing.md },
   nudgeTitle: { fontFamily: fonts.semibold, fontSize: 18, color: colors.carbon },
   nudgeBody: { fontFamily: fonts.regular, fontSize: 15, lineHeight: 22, color: colors.carbon, opacity: 0.75, marginVertical: spacing.sm },
