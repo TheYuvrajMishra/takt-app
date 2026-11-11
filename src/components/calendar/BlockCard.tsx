@@ -386,6 +386,7 @@ const styles = StyleSheet.create({
     lineHeight: 14,
     opacity: 0.8,
     marginTop: 1,
+    fontVariant: ['tabular-nums'],
   },
   notes: {
     fontFamily: fonts.regular,

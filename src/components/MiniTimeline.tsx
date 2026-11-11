@@ -232,7 +232,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginTop: 4,
   },
-  edgeLabel: { fontFamily: fonts.medium, fontSize: 12, color: colors.carbon, opacity: 0.55 },
+  edgeLabel: { fontFamily: fonts.medium, fontSize: 12, color: colors.carbon, opacity: 0.55, fontVariant: ['tabular-nums'] },
   fade: { position: 'absolute', top: 0, bottom: 0, width: FADE_W },
   fadeLeft: { left: 0 },
   fadeRight: { right: 0 },
@@ -247,7 +247,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  nowPillText: { fontFamily: fonts.semibold, fontSize: 12, color: colors.paper },
+  nowPillText: { fontFamily: fonts.semibold, fontSize: 12, color: colors.paper, fontVariant: ['tabular-nums'] },
   nowLine: {
     position: 'absolute',
     top: PILL_H,

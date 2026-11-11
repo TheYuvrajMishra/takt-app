@@ -492,6 +492,9 @@ const styles = StyleSheet.create({
     ...shadows.soft,
     flexShrink: 1,
     minWidth: 0,
+    // Touch target: the pill's content is ~28dp, but a finger needs
+    // 44dp — without this the smallest pills are hard to hit.
+    minHeight: 44,
   },
   ring: {
     position: 'absolute',

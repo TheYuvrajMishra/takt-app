@@ -10,7 +10,7 @@
 // the real shared Dock.tsx — dropping a node onto the grid creates the
 // block at the drop position, dropping outside the grid (or tapping the
 // "+" customize action) falls back to the earliest free slot.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, useWindowDimensions, View, type ScrollViewInstance } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { Text, TextInput } from '../../components/TText';
@@ -160,6 +160,7 @@ export default function CalendarScreen() {
   const templates = useStore((s) => s.templates);
   const dayOverrides = useStore((s) => s.dayOverrides);
   const getBlocksForDate = useStore((s) => s.getBlocksForDate);
+  const getPastTitles = useStore((s) => s.getPastTitles);
   const addBlock = useStore((s) => s.addBlock);
   const moveBlock = useStore((s) => s.moveBlock);
   const resizeBlock = useStore((s) => s.resizeBlock);
@@ -196,6 +197,15 @@ export default function CalendarScreen() {
   const [detail, setDetail] = useState<{ block: Block; date: string } | null>(null);
   const [qcTitle, setQcTitle] = useState('');
   const [qcDoNotNudge, setQcDoNotNudge] = useState(false);
+  // Title autocomplete (combobox): as the user types, offer up to 5
+  // titles they have used before that contain the typed text.
+  const titleSuggestions = useMemo(() => {
+    const q = qcTitle.trim().toLowerCase();
+    if (q.length < 2) return [] as string[];
+    return getPastTitles()
+      .filter((t) => t.toLowerCase().includes(q) && t.toLowerCase() !== q)
+      .slice(0, 5);
+  }, [qcTitle, getPastTitles]);
   // Whether the user manually flipped the nudge switch in the open sheet.
   // Until they do, the switch follows the Do-not-nudge defaults for the
   // selected category (create mode only).
@@ -1554,6 +1564,20 @@ export default function CalendarScreen() {
                 placeholderTextColor={faintText}
                 style={styles.input}
               />
+              {titleSuggestions.length > 0 ? (
+                <View style={styles.suggestRow}>
+                  {titleSuggestions.map((t) => (
+                    <Pressable
+                      key={t}
+                      onPress={() => setQcTitle(t)}
+                      style={styles.suggestChip}
+                      accessibilityLabel={`Use title ${t}`}
+                    >
+                      <Text style={styles.suggestText}>{t}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
               <Text style={styles.sheetLabel}>Category</Text>
               <View style={styles.chipWrap}>
                 {cats.map((cat) => {
@@ -1780,7 +1804,7 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.sm,
   },
   stripItem: { flex: 1, alignItems: 'center', gap: 4 },
-  stripWeekday: { fontFamily: fonts.medium, fontSize: 10, color: faintText },
+  stripWeekday: { fontFamily: fonts.medium, fontSize: 11, color: faintText },
   stripDay: {
     width: 34,
     height: 34,
@@ -1795,7 +1819,7 @@ const styles = StyleSheet.create({
   gridScroll: { flex: 1 },
   hourRow: { flexDirection: 'row', alignItems: 'flex-start' },
   hourLabelWrap: { width: GUTTER, alignItems: 'center', paddingTop: 2 },
-  hourLabel: { fontFamily: fonts.regular, fontSize: 11, color: faintText },
+  hourLabel: { fontFamily: fonts.regular, fontSize: 11, color: faintText, fontVariant: ['tabular-nums'] },
   hourLine: { flex: 1, borderTopWidth: 1, borderTopColor: hairline },
   colSep: { position: 'absolute', top: 0, width: 1, backgroundColor: hairline },
   nowLine: {
@@ -1894,6 +1918,18 @@ const styles = StyleSheet.create({
     backgroundColor: colors.cloud,
   },
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  suggestRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+  suggestChip: {
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: hairline,
+    backgroundColor: colors.cloud,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    minHeight: 44,
+    justifyContent: 'center',
+  },
+  suggestText: { fontFamily: fonts.medium, fontSize: 13, color: colors.carbon },
   catDot: { width: 10, height: 10, borderRadius: 5 },
   catChip: {
     flexDirection: 'row',
@@ -1904,6 +1940,8 @@ const styles = StyleSheet.create({
     borderColor: hairline,
     paddingHorizontal: 11,
     paddingVertical: 7,
+    // Touch target: 44dp minimum so the chips are easy to hit.
+    minHeight: 44,
   },
   catChipActive: { backgroundColor: colors.carbon, borderColor: colors.carbon },
   catChipText: { fontFamily: fonts.medium, fontSize: 13, color: colors.carbon },
@@ -1916,6 +1954,9 @@ const styles = StyleSheet.create({
     borderColor: hairline,
     paddingHorizontal: 12,
     paddingVertical: 8,
+    // Touch target: 44dp minimum so the chips are easy to hit.
+    minHeight: 44,
+    justifyContent: 'center',
   },
   durationChipActive: { backgroundColor: colors.carbon, borderColor: colors.carbon },
   durationText: { fontFamily: fonts.medium, fontSize: 13, color: colors.carbon },

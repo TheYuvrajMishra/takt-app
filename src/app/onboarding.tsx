@@ -1,11 +1,12 @@
 import { useRef, useState, type ReactNode } from 'react';
 import { Linking, PanResponder, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import Animated, { FadeInUp } from 'react-native-reanimated';
 import { ScrollScreen } from '../components/layout';
 import { Text, TextInput } from '../components/TText';
 import { useRouter } from 'expo-router';
 import * as Notifications from 'expo-notifications';
 import * as Haptics from 'expo-haptics';
-import { colors, fonts, hairline, radii, spacing, categoryColorHex } from '../theme/tokens';
+import { colors, fonts, hairline, radii, spacing, tracking, categoryColorHex } from '../theme/tokens';
 import { DEFAULT_CATEGORIES, type Category, type Settings } from '../types';
 import { dateKey, earliestEmptySlot, minToTime, snap5 } from '../lib/core';
 import { CategoryIcon } from '../components/CategoryIcon';
@@ -310,10 +311,14 @@ export default function OnboardingScreen({ onDone }: { onDone?: () => void }) {
             <Text style={styles.body}>
               These are pre-selected for you. Tap to add or remove, tap a name to rename it.
             </Text>
-            {cats.map((cat) => {
+            {cats.map((cat, idx) => {
               const picked = pickedCats.includes(cat.id);
               return (
-                <View key={cat.id} style={[styles.card, styles.catRow]}>
+                <Animated.View
+                  key={cat.id}
+                  entering={FadeInUp.delay(idx * 40).duration(220)}
+                  style={[styles.card, styles.catRow]}
+                >
                   <Pressable
                     onPress={() =>
                       setPickedCats((prev) =>
@@ -342,7 +347,7 @@ export default function OnboardingScreen({ onDone }: { onDone?: () => void }) {
                       <Text style={styles.catName}>{cat.name}</Text>
                     </Pressable>
                   )}
-                </View>
+                </Animated.View>
               );
             })}
           </>
@@ -647,7 +652,7 @@ const styles = StyleSheet.create({
   skip: { fontFamily: fonts.medium, fontSize: 15, color: colors.carbon },
   stepLabel: { fontFamily: fonts.medium, fontSize: 13, color: colors.carbon, opacity: 0.55, paddingHorizontal: spacing.lg, marginTop: spacing.sm },
   content: { padding: spacing.lg, paddingBottom: spacing.xl },
-  title: { fontFamily: fonts.semibold, fontSize: 32, lineHeight: 38, color: colors.carbon, marginBottom: spacing.sm },
+  title: { fontFamily: fonts.semibold, fontSize: 32, lineHeight: 38, color: colors.carbon, marginBottom: spacing.sm, letterSpacing: tracking.tight },
   body: { fontFamily: fonts.regular, fontSize: 16, lineHeight: 24, color: colors.carbon, opacity: 0.75, marginBottom: spacing.md },
   butterCard: { backgroundColor: colors.butter, borderRadius: radii.card, padding: spacing.lg },
   butterText: { fontFamily: fonts.semibold, fontSize: 18, lineHeight: 26, color: colors.carbon },
@@ -680,7 +685,7 @@ const styles = StyleSheet.create({
   nodeTime: { fontFamily: fonts.medium, fontSize: 13, color: colors.carbon, opacity: 0.7 },
   radial: { position: 'absolute', left: '50%', top: '50%', width: 220, height: 220, marginLeft: -110, marginTop: -110 },
   radialItem: { position: 'absolute', width: 56, height: 56, marginLeft: -28, marginTop: -28, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.paper, borderRadius: 999, borderWidth: 1, borderColor: hairline },
-  radialLabel: { fontFamily: fonts.medium, fontSize: 10, color: colors.carbon },
+  radialLabel: { fontFamily: fonts.medium, fontSize: 11, color: colors.carbon },
   radialCenter: { position: 'absolute', left: 90, top: 90, width: 40, height: 40, marginLeft: -20, marginTop: -20, backgroundColor: colors.carbon, borderRadius: 999, alignItems: 'center', justifyContent: 'center' },
   radialCenterText: { fontFamily: fonts.medium, fontSize: 11, color: colors.paper },
   controlsRow: { flexDirection: 'row', gap: 8, marginBottom: 8, alignItems: 'center' },

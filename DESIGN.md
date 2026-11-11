@@ -54,6 +54,25 @@
   trigger, channelId, alarm sound, actions); an immediate trigger lands
   on Android's default channel and proves nothing. Settings has a "Send
   a test notification" button for the same check.
+- UX pass (20 concepts, 2026-11-11): tabular numbers on every time/number
+  readout (hero score, hours line, timeline pill + edge labels, calendar
+  hour labels, block times) so digits never jitter; Done is optimistic
+  (commitCompletion sets state first, persists after, reverts on a failed
+  write); touch targets are 44dp minimum (drawer pills, quick-create
+  category/duration/suggestion chips); tracking scale (tight -0.5 on large
+  display titles, wide 3 on labels, body 0); smallest labels are 11px
+  (no 10px text); onboarding category rows stagger in (FadeInUp, 40ms
+  apart); quick-create title autocompletes from past titles (combobox,
+  up to 5 matches, tap to fill). Already handled, so not changed: safe
+  area (layout contract), leading (body 1.5, headings ~1.2), line length
+  (~45–55 chars on a phone), origin-aware animation (radial from the
+  touch point, sheet from the bottom, tabs from the tapped direction),
+  interruptible animation (all withTiming/DECEL), progressive disclosure
+  (stepped onboarding, essential-only sheets), affordance (bobbing arrow,
+  clear Done button, grip zones). OKLCH not applied — the fixed palette
+  is already perceptually distinct (plus hatch patterns). Shared element
+  transition deferred — needs a navigation refactor (tabs + sheets, not
+  stack screens).
 - Calendar day change slides like a page turn: the grid follows the
   finger on a two-finger swipe (slides out past 60dp, snaps back under
   it), and every anchor change (buttons, date strip, Today, swipe)

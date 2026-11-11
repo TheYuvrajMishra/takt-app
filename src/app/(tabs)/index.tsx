@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Text, TextInput } from '../../components/TText';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors, fonts, hairline, radii, spacing } from '../../theme/tokens';
+import { colors, fonts, hairline, radii, spacing, tracking } from '../../theme/tokens';
 import { DEFAULT_DURATION_MIN } from '../../types';
 import type { Block, Category, CompletionEntry } from '../../types';
 import {
@@ -842,7 +842,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  heroToday: { fontFamily: fonts.semibold, fontSize: 14, letterSpacing: 3, color: colors.carbon },
+  heroToday: { fontFamily: fonts.semibold, fontSize: 14, letterSpacing: tracking.wide, color: colors.carbon },
   datePill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -854,8 +854,8 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   datePillText: { fontFamily: fonts.medium, fontSize: 13, color: colors.carbon },
-  heroTitle: { fontFamily: fonts.semibold, fontSize: 30, lineHeight: 36, color: colors.carbon, marginTop: spacing.md },
-  hoursLine: { fontFamily: fonts.medium, fontSize: 15, color: colors.carbon, opacity: 0.6, marginTop: 2 },
+  heroTitle: { fontFamily: fonts.semibold, fontSize: 30, lineHeight: 36, color: colors.carbon, marginTop: spacing.md, letterSpacing: tracking.tight },
+  hoursLine: { fontFamily: fonts.medium, fontSize: 15, color: colors.carbon, opacity: 0.6, marginTop: 2, fontVariant: ['tabular-nums'] },
   updateBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -868,7 +868,7 @@ const styles = StyleSheet.create({
   },
   updateBannerText: { fontFamily: fonts.medium, fontSize: 14, color: colors.carbon },
   updateBannerAction: { fontFamily: fonts.semibold, fontSize: 14, color: colors.carbon },
-  score: { fontFamily: fonts.regular, fontSize: 110, lineHeight: 118, color: colors.carbon },
+  score: { fontFamily: fonts.regular, fontSize: 110, lineHeight: 118, color: colors.carbon, fontVariant: ['tabular-nums'] },
   heroDivider: { width: '100%', height: 1, backgroundColor: hairline, marginVertical: spacing.md },
   heroTaskRow: { flexDirection: 'row', alignItems: 'center', gap: 12, width: '100%' },
   heroTaskText: { flex: 1 },

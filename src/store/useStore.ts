@@ -244,6 +244,8 @@ export interface TaktState {
   getActiveTemplate: () => RoutineTemplate | null;
   getBlocksForDate: (date: string) => Block[];
   getCompletion: (blockId: string, date: string) => CompletionEntry | undefined;
+  /** Distinct block titles the user has used before (for title autocomplete). */
+  getPastTitles: () => string[];
 
   addBlock: (
     input: Omit<Block, 'id'> & { id?: string },
@@ -428,9 +430,16 @@ export const useStore = create<TaktState>()((set, get) => {
     );
   }
 
-  /** Upsert a completion entry and update state. */
+  /**
+   * Upsert a completion entry and update state. Optimistic: the UI shows
+   * the result immediately (Done feels instant), the sqlite write follows;
+   * a failed write reverts to the previous entry so the UI never claims
+   * a save that did not happen.
+   */
   async function commitCompletion(entry: CompletionEntry): Promise<void> {
-    await db.saveCompletion(entry);
+    const prev = get().completions.find(
+      (c) => c.blockId === entry.blockId && c.date === entry.date,
+    );
     set((s) => ({
       completions: [
         ...s.completions.filter(
@@ -439,6 +448,23 @@ export const useStore = create<TaktState>()((set, get) => {
         entry,
       ],
     }));
+    try {
+      await db.saveCompletion(entry);
+    } catch (e) {
+      set((s) => ({
+        completions: prev
+          ? [
+              ...s.completions.filter(
+                (c) => !(c.blockId === entry.blockId && c.date === entry.date),
+              ),
+              prev,
+            ]
+          : s.completions.filter(
+              (c) => !(c.blockId === entry.blockId && c.date === entry.date),
+            ),
+      }));
+      throw e;
+    }
   }
 
   /**
@@ -629,6 +655,24 @@ export const useStore = create<TaktState>()((set, get) => {
     getBlocksForDate: (date) => {
       const s = get();
       return resolveBlocksForDate(date, s.templates, s.dayOverrides);
+    },
+
+    getPastTitles: () => {
+      const s = get();
+      const titles = new Set<string>();
+      for (const t of s.templates) {
+        for (const b of t.blocks) {
+          const title = b.title.trim();
+          if (title) titles.add(title);
+        }
+      }
+      for (const blocks of Object.values(s.dayOverrides)) {
+        for (const b of blocks) {
+          const title = b.title.trim();
+          if (title) titles.add(title);
+        }
+      }
+      return [...titles].sort((a, b) => a.localeCompare(b));
     },
 
     getCompletion: (blockId, date) =>

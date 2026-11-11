@@ -77,6 +77,13 @@ export const fonts = {
   semibold: 'InterTight-SemiBold',
 } as const;
 
+/**
+ * Tracking (letter-spacing): display headings run tight so they read as
+ * one wordmark, small-caps labels run wide so they read as a label.
+ * Body copy stays at 0 — tracking on body text hurts readability.
+ */
+export const tracking = { tight: -0.5, normal: 0, wide: 3 } as const;
+
 // Large-text setting: body text scales by this factor (see components/TText).
 export const LARGE_TEXT_SCALE = 1.18;
 export function scaledFontSize(size: number, largeText: boolean): number {
