@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { Linking, PanResponder, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { ScrollScreen } from '../components/layout';
 import { Text, TextInput } from '../components/TText';
@@ -10,7 +10,7 @@ import { DEFAULT_CATEGORIES, type Category, type Settings } from '../types';
 import { dateKey, earliestEmptySlot, minToTime, snap5 } from '../lib/core';
 import { CategoryIcon } from '../components/CategoryIcon';
 import { useStore } from '../store/useStore';
-import { requestNudgePermissions, rescheduleIfPermitted } from '../lib/nudge';
+import { requestNudgePermissions, rescheduleIfPermitted, testNudgeNow } from '../lib/nudge';
 
 // On finish, `settings.onboardingDone` is persisted through the store and
 // the root layout's onboarding gate stops redirecting here.
@@ -43,8 +43,25 @@ export default function OnboardingScreen({ onDone }: { onDone?: () => void }) {
   const router = useRouter();
   const updateSettings = useStore((s) => s.updateSettings);
   const addBlock = useStore((s) => s.addBlock);
+  const savedName = useStore((s) => s.settings.userName);
   const [step, setStep] = useState(1);
   const [done, setDone] = useState(false);
+
+  // Step 1 — the user's name, so Takt can greet them by it.
+  const [name, setName] = useState(savedName ?? '');
+
+  const saveName = () => {
+    const trimmed = name.trim();
+    if (trimmed && trimmed !== (savedName ?? '')) {
+      void updateSettings({ userName: trimmed });
+    }
+  };
+
+  const goNext = () => {
+    if (step === 1) saveName();
+    if (step === TOTAL_STEPS) finish();
+    else setStep((s) => s + 1);
+  };
 
   // Step 2
   const [notifStatus, setNotifStatus] = useState<string>('not asked');
@@ -117,13 +134,10 @@ export default function OnboardingScreen({ onDone }: { onDone?: () => void }) {
 
   const sendTestNudge = async () => {
     try {
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title: 'Takt nudge',
-          body: 'Morning run starts now — tap the nudge to open Takt.',
-        },
-        trigger: null,
-      });
+      // The real test nudge: alarm sound + Done/Start actions, through
+      // the nudge channel. (An inline schedule without a channel used to
+      // fire silently on the default channel, so it proved nothing.)
+      await testNudgeNow('Morning run');
       setNudgeSent(true);
     } catch {
       // A failed schedule used to report success anyway; stay honest so the
@@ -203,7 +217,9 @@ export default function OnboardingScreen({ onDone }: { onDone?: () => void }) {
   if (done) {
     return (
       <View style={styles.root}>
-        <Text style={styles.title}>You are all set.</Text>
+        <Text style={styles.title}>
+          You are all set{name.trim() ? `, ${name.trim()}` : ''}.
+        </Text>
         <Text style={styles.body}>Your day is ready to be nudged into shape.</Text>
       </View>
     );
@@ -234,6 +250,17 @@ export default function OnboardingScreen({ onDone }: { onDone?: () => void }) {
               Takt keeps your routine on a timeline and nudges you until the thing is done. No
               shouting, no streak-shaming — just a steady tap on the shoulder.
             </Text>
+            <Text style={styles.nameLabel}>What should Takt call you?</Text>
+            <TextInput
+              value={name}
+              onChangeText={setName}
+              placeholder="Your name"
+              placeholderTextColor="rgba(10,10,10,0.4)"
+              style={styles.nameInput}
+              returnKeyType="done"
+              onSubmitEditing={goNext}
+              autoCapitalize="words"
+            />
             <View style={styles.butterCard}>
               <Text style={styles.butterText}>
                 Plan the day once. Takt handles the remembering.
@@ -452,28 +479,60 @@ export default function OnboardingScreen({ onDone }: { onDone?: () => void }) {
         {step === 6 && (
           <>
             <Text style={styles.title}>Where things live</Text>
-            <Text style={styles.body}>Three tabs, one job each.</Text>
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Today</Text>
-              <Text style={styles.cardBody}>
-                Your timeline for right now. The current task is the hero; the big Done button
-                lives at the bottom.
-              </Text>
-            </View>
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Calendar</Text>
-              <Text style={styles.cardBody}>
-                Plan ahead, drag blocks between days, and edit with a scope — today only, or
-                from today onwards.
-              </Text>
-            </View>
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Stats</Text>
-              <Text style={styles.cardBody}>
-                A monthly heatmap of discipline, streaks, on-time rate, and focus time per
-                category.
-              </Text>
-            </View>
+            <Text style={styles.body}>
+              Three tabs, one job each. Here is what they look like — and
+              where a task gets created.
+            </Text>
+
+            <MockupPhone caption="Today — create from the dock">
+              <View style={styles.mockHero}>
+                <Text style={styles.mockHeroTitle}>Discipline so far</Text>
+                <Text style={styles.mockHeroScore}>2 h 10 min of 5 h 30 min</Text>
+                <View style={styles.mockBar}>
+                  <View style={[styles.mockSeg, { flex: 2, backgroundColor: categoryColorHex.mint }]} />
+                  <View style={[styles.mockSeg, { flex: 1, backgroundColor: categoryColorHex.apricot }]} />
+                </View>
+              </View>
+              <View style={styles.mockTask}>
+                <Text style={styles.mockTaskTitle}>Morning run</Text>
+                <Text style={styles.mockTaskTime}>7:00 · 30 min</Text>
+              </View>
+              <View style={styles.mockDock}>
+                <View style={[styles.mockDockDot, { backgroundColor: categoryColorHex.mint }]} />
+                <View style={[styles.mockDockDot, { backgroundColor: categoryColorHex.apricot }]} />
+                <View style={[styles.mockDockDot, { backgroundColor: categoryColorHex.violet }]} />
+                <Text style={styles.mockDockText}>Hold a category, drag it onto your day</Text>
+              </View>
+            </MockupPhone>
+
+            <MockupPhone caption="Calendar — plan ahead, drag between days">
+              <View style={styles.mockCal}>
+                {[
+                  { t: '7:00', c: categoryColorHex.mint, h: 34 },
+                  { t: '8:00', c: categoryColorHex.apricot, h: 26 },
+                  { t: '9:30', c: categoryColorHex.violet, h: 44 },
+                ].map((b) => (
+                  <View key={b.t} style={styles.mockCalRow}>
+                    <Text style={styles.mockCalTime}>{b.t}</Text>
+                    <View style={[styles.mockCalBlock, { height: b.h, backgroundColor: b.c }]} />
+                  </View>
+                ))}
+              </View>
+            </MockupPhone>
+
+            <MockupPhone caption="Stats — your discipline, as a heatmap">
+              <View style={styles.mockHeat}>
+                {Array.from({ length: 28 }, (_, i) => (
+                  <View
+                    key={i}
+                    style={[
+                      styles.mockHeatCell,
+                      { opacity: 0.15 + ((i * 37) % 10) / 10 },
+                    ]}
+                  />
+                ))}
+              </View>
+            </MockupPhone>
           </>
         )}
 
@@ -558,10 +617,23 @@ export default function OnboardingScreen({ onDone }: { onDone?: () => void }) {
         ) : (
           <View style={styles.backButton} />
         )}
-        <Pressable style={styles.primaryButton} onPress={() => (step === TOTAL_STEPS ? finish() : setStep((s) => s + 1))}>
+        <Pressable style={styles.primaryButton} onPress={goNext}>
           <Text style={styles.primaryButtonText}>{step === TOTAL_STEPS ? 'Start using Takt' : 'Continue'}</Text>
         </Pressable>
       </View>
+    </View>
+  );
+}
+
+/** A static phone-frame mockup of an app screen, for onboarding. */
+function MockupPhone({ caption, children }: { caption: string; children: ReactNode }) {
+  return (
+    <View style={styles.mockup}>
+      <View style={styles.mockupPhone}>
+        <View style={styles.mockupNotch} />
+        {children}
+      </View>
+      <Text style={styles.mockupCaption}>{caption}</Text>
     </View>
   );
 }
@@ -633,4 +705,56 @@ const styles = StyleSheet.create({
   backButtonText: { fontFamily: fonts.medium, fontSize: 15, color: colors.carbon },
   primaryButton: { flex: 1, backgroundColor: colors.carbon, borderRadius: radii.pill, paddingVertical: 16, alignItems: 'center' },
   primaryButtonText: { fontFamily: fonts.semibold, fontSize: 16, color: colors.paper },
+  nameLabel: { fontFamily: fonts.medium, fontSize: 15, color: colors.carbon, marginBottom: 8 },
+  nameInput: {
+    backgroundColor: colors.paper,
+    borderRadius: radii.cardSm,
+    borderWidth: 1,
+    borderColor: hairline,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontFamily: fonts.medium,
+    fontSize: 17,
+    color: colors.carbon,
+    marginBottom: spacing.md,
+  },
+  mockup: { marginBottom: spacing.lg, alignItems: 'center' },
+  mockupPhone: {
+    width: 240,
+    backgroundColor: colors.paper,
+    borderRadius: 28,
+    borderWidth: 2,
+    borderColor: colors.carbon,
+    padding: 14,
+    paddingTop: 22,
+    gap: 10,
+  },
+  mockupNotch: {
+    position: 'absolute',
+    top: 8,
+    alignSelf: 'center',
+    width: 64,
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: colors.carbon,
+    opacity: 0.85,
+  },
+  mockupCaption: { fontFamily: fonts.medium, fontSize: 14, color: colors.carbon, marginTop: 10, textAlign: 'center' },
+  mockHero: { backgroundColor: colors.butter, borderRadius: 16, padding: 12 },
+  mockHeroTitle: { fontFamily: fonts.semibold, fontSize: 15, color: colors.carbon },
+  mockHeroScore: { fontFamily: fonts.medium, fontSize: 12, color: colors.carbon, opacity: 0.7, marginTop: 2, marginBottom: 8 },
+  mockBar: { flexDirection: 'row', height: 18, backgroundColor: colors.paper, borderRadius: 9, overflow: 'hidden' },
+  mockSeg: { height: '100%' },
+  mockTask: { backgroundColor: colors.cloud, borderRadius: 12, padding: 10 },
+  mockTaskTitle: { fontFamily: fonts.semibold, fontSize: 14, color: colors.carbon },
+  mockTaskTime: { fontFamily: fonts.medium, fontSize: 12, color: colors.carbon, opacity: 0.6 },
+  mockDock: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.carbon, borderRadius: 999, paddingVertical: 8, paddingHorizontal: 12 },
+  mockDockDot: { width: 14, height: 14, borderRadius: 999 },
+  mockDockText: { fontFamily: fonts.medium, fontSize: 11, color: colors.paper, flex: 1 },
+  mockCal: { gap: 6 },
+  mockCalRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  mockCalTime: { fontFamily: fonts.medium, fontSize: 11, color: colors.carbon, opacity: 0.6, width: 34 },
+  mockCalBlock: { flex: 1, borderRadius: 8 },
+  mockHeat: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
+  mockHeatCell: { width: 22, height: 22, borderRadius: 6, backgroundColor: colors.mint },
 });

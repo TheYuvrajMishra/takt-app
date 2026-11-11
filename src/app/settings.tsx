@@ -7,6 +7,7 @@ import { colors, fonts, hairline, radii, spacing } from '../theme/tokens';
 import { DEFAULT_CATEGORIES, type Settings } from '../types';
 import { CategoryIcon } from '../components/CategoryIcon';
 import { mergeBackupSettings } from '../lib/backup';
+import { testNudgeNow } from '../lib/nudge';
 import { useStore } from '../store/useStore';
 import {
   formatSize,
@@ -100,6 +101,9 @@ export default function SettingsScreen() {
   const storeCategories = useStore((s) => s.categories);
   const lastToast = useStore((s) => s.lastToast);
   const [toast, setToast] = useState<string | null>(null);
+  // Test notification: fires a real nudge (alarm sound + Done/Start
+  // actions) 1s out, so the user can check notifications actually work.
+  const [testSent, setTestSent] = useState(false);
   // Auto-updater state (Fix 6): the pending update always shows here,
   // even when "Later" was tapped on the sheet.
   const updateStatus = useUpdaterStore((s) => s.status);
@@ -271,6 +275,28 @@ export default function SettingsScreen() {
           decDisabled={settings.perDayNudgeCap <= 5}
           incDisabled={settings.perDayNudgeCap >= 100}
         />
+        <View style={styles.divider} />
+        <Pressable
+          style={styles.testButton}
+          onPress={() => {
+            void testNudgeNow()
+              .then(() => {
+                setTestSent(true);
+                showToast('Test notification sent — check in a second.');
+              })
+              .catch(() => {
+                setTestSent(false);
+                showToast('Test notification failed to send.');
+              });
+          }}
+        >
+          <Text style={styles.testButtonText}>
+            {testSent ? 'Test sent — check your notifications' : 'Send a test notification'}
+          </Text>
+        </Pressable>
+        <Text style={styles.hint}>
+          Plays the alarm sound with Done / Start actions, like a real nudge.
+        </Text>
       </View>
 
       <Text style={styles.sectionTitle}>Quiet hours</Text>
@@ -442,6 +468,8 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12 },
   rowLabel: { fontFamily: fonts.medium, fontSize: 15, color: colors.carbon },
   hint: { fontFamily: fonts.regular, fontSize: 13, color: colors.carbon, opacity: 0.6, paddingBottom: 10 },
+  testButton: { backgroundColor: colors.carbon, borderRadius: radii.pill, paddingVertical: 12, alignItems: 'center', marginVertical: 8 },
+  testButtonText: { fontFamily: fonts.semibold, fontSize: 14, color: colors.paper },
   divider: { height: 1, backgroundColor: hairline },
   toggleText: { flex: 1, paddingRight: spacing.md },
   stepper: { flexDirection: 'row', alignItems: 'center', gap: 12 },

@@ -74,6 +74,8 @@ export interface Settings {
   quietHoursStart: string; // "22:00"
   quietHoursEnd: string; // "07:00"
   onboardingDone: boolean;
+  /** The user's name, from onboarding (optional so older saves still load). */
+  userName?: string;
   haptics: boolean;
   reduceMotion: boolean;
   largeText: boolean;

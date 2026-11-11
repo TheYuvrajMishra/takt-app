@@ -12,12 +12,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, View, type ScrollViewInstance } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
 import { Text } from './TText';
 import type { Block, Category } from '../types';
 import { categoryColorHex, colors, fonts, radii } from '../theme/tokens';
 import { dayTimelineSegments, minToTime } from '../lib/core';
 import { CategoryIcon } from './CategoryIcon';
 import { textColorFor } from './calendar/helpers';
+import { useStore } from '../store/useStore';
 
 /** The only red in the app: the now-marker. */
 const NOW_RED = '#E5484D';
@@ -30,6 +32,11 @@ const ICON_MIN_W = 28;
 const DAY_MIN = 24 * 60;
 /** The strip fades into the card over this many dp at each viewport edge. */
 const FADE_W = 28;
+/** Fixed pill size: the pill is centred on one x with the line and dot,
+    so its width must not depend on the time string ("9:05" vs "19:22"
+    used to shift it off the line). */
+const PILL_W = 56;
+const PILL_H = 22;
 
 /** A #RRGGBB colour plus its fully transparent twin, for the edge fade. */
 function fadePair(hex: string): [string, string] {
@@ -60,6 +67,11 @@ export function MiniTimeline({
   const viewportW = useRef(0);
   const centeredRef = useRef(false);
   const [scrollX, setScrollX] = useState(0);
+  const hapticsEnabled = useStore((s) => s.settings.haptics);
+  // Tactile scrub: a light tick each time the centre crosses an hour
+  // boundary while swiping. Starts at now's hour so the initial
+  // centring scroll does not tick.
+  const lastTickHour = useRef(Math.floor(nowMin / 60));
   const segments = useMemo(
     () => dayTimelineSegments(blocks, 0, DAY_MIN),
     [blocks],
@@ -74,6 +86,25 @@ export function MiniTimeline({
   const viewport = viewportW.current;
   const windowStartMin = scrollX / pxPerMin;
   const windowEndMin = (scrollX + viewport) / pxPerMin;
+
+  // One x for the whole marker — pill, line and dot all sit on it, so
+  // they can never drift apart. Clamped into the strip so the pill
+  // stays visible at the day's edges.
+  const markerX = Math.max(PILL_W / 2, Math.min(contentW - PILL_W / 2, nowX));
+
+  const onScroll = useCallback(
+    (x: number) => {
+      setScrollX(x);
+      const hour = Math.floor((x + viewportW.current / 2) / pxPerMin / 60);
+      if (hour !== lastTickHour.current) {
+        lastTickHour.current = hour;
+        if (hapticsEnabled) {
+          void Haptics.selectionAsync().catch(() => undefined);
+        }
+      }
+    },
+    [hapticsEnabled, pxPerMin],
+  );
 
   // Centre the strip on now when it first appears (and once more shortly
   // after, in case the layout wasn't ready on the first pass). Only
@@ -91,8 +122,6 @@ export function MiniTimeline({
     return () => clearTimeout(t);
   }, [centerOnNow]);
 
-  // Keep the pill inside the strip (the line and dot stay exactly on now).
-  const pillX = Math.max(28, Math.min(contentW - 28, nowX));
   const [fadeSolid, fadeClear] = fadePair(cardColor);
 
   return (
@@ -103,7 +132,12 @@ export function MiniTimeline({
           horizontal
           showsHorizontalScrollIndicator={false}
           scrollEventThrottle={16}
-          onScroll={(e) => setScrollX(e.nativeEvent.contentOffset.x)}
+          onScroll={(e) => onScroll(e.nativeEvent.contentOffset.x)}
+          onScrollBeginDrag={() => {
+            if (hapticsEnabled) {
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+            }
+          }}
           onLayout={(e) => {
             viewportW.current = e.nativeEvent.layout.width;
             centerOnNow();
@@ -120,7 +154,7 @@ export function MiniTimeline({
                       key={`${seg.startMin}-${seg.endMin}`}
                       style={[
                         styles.segment,
-                        { width: w },
+                        { width: Math.max(0, w - 2) },
                         cat ? { backgroundColor: categoryColorHex[cat.color] } : null,
                       ]}
                     >
@@ -136,12 +170,14 @@ export function MiniTimeline({
                   );
                 })}
               </View>
-              {/* The now-marker rides with the strip, pinned to now. */}
-              <View style={[styles.nowPill, { left: pillX }]}>
+              {/* The now-marker rides with the strip, pinned to now: the
+                  pill sits outside (above) the bar, attached to a full
+                  vertical line that runs from the pill down past the bar. */}
+              <View style={[styles.nowPill, { left: markerX }]}>
                 <Text style={styles.nowPillText}>{minToTime(nowMin)}</Text>
               </View>
-              <View style={[styles.nowLine, { left: nowX }]} />
-              <View style={[styles.nowDot, { left: nowX }]} />
+              <View style={[styles.nowLine, { left: markerX }]} />
+              <View style={[styles.nowDot, { left: markerX }]} />
             </View>
           </View>
         </ScrollView>
@@ -188,6 +224,8 @@ const styles = StyleSheet.create({
   segment: {
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: 8,
+    marginHorizontal: 1,
   },
   edgeLabels: {
     flexDirection: 'row',
@@ -201,17 +239,19 @@ const styles = StyleSheet.create({
   nowPill: {
     position: 'absolute',
     top: 0,
-    marginLeft: -26,
+    width: PILL_W,
+    height: PILL_H,
+    marginLeft: -PILL_W / 2,
     backgroundColor: NOW_RED,
     borderRadius: radii.pill,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   nowPillText: { fontFamily: fonts.semibold, fontSize: 12, color: colors.paper },
   nowLine: {
     position: 'absolute',
-    top: 26,
-    bottom: 0,
+    top: PILL_H,
+    bottom: -6,
     width: 2,
     marginLeft: -1,
     backgroundColor: NOW_RED,

@@ -37,10 +37,23 @@
   (pill + line + dot) rides WITH the strip, pinned to the current time:
   the strip starts centred on now, and when the user swipes the marker
   moves with the timeline — it scrolls off-screen once now is past the
-  visible hour. The only time labels are the visible window's start and
-  end (below the bar), updating as you swipe. The strip fades to the
-  card colour at the viewport's left and right edges (28dp gradients,
-  pointerEvents none).
+  visible hour. Pill, line and dot share ONE x (markerX) and the pill is
+  a fixed 56×22, so the pill can never drift off the line (a variable
+  width did that). The pill sits outside (above) the bar, attached to a
+  full vertical line that runs from the pill's bottom down past the bar.
+  Each time block is a rounded corner (radius 8, 1dp gap). Swiping ticks
+  haptically at each hour boundary (and a light tap on drag start),
+  gated by the haptics setting. The only time labels are the visible
+  window's start and end (below the bar), updating as you swipe. The
+  strip fades to the card colour at the viewport's left and right edges
+  (28dp gradients, pointerEvents none).
+- Onboarding asks for the user's name (step 1, saved to settings) and
+  shows phone-frame mockups of the app — Today (create from the dock),
+  Calendar (plan ahead), Stats (heatmap) — instead of text-only cards.
+- A test notification must go through the real nudge channel (Date
+  trigger, channelId, alarm sound, actions); an immediate trigger lands
+  on Android's default channel and proves nothing. Settings has a "Send
+  a test notification" button for the same check.
 - Calendar day change slides like a page turn: the grid follows the
   finger on a two-finger swipe (slides out past 60dp, snaps back under
   it), and every anchor change (buttons, date strip, Today, swipe)

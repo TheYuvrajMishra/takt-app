@@ -76,14 +76,35 @@ describe('hero carries the mini timeline', () => {
     expect(TIMELINE_SRC).toContain('edgeLabels');
     expect(TIMELINE_SRC).toContain('windowStartMin');
     expect(TIMELINE_SRC).toContain('windowEndMin');
-    expect(TIMELINE_SRC).toContain('{ left: nowX }');
-    expect(TIMELINE_SRC).toContain('{ left: pillX }');
+    expect(TIMELINE_SRC).toContain('{ left: markerX }');
     expect(TIMELINE_SRC).not.toContain("left: '50%'");
     expect(TIMELINE_SRC).toContain('LinearGradient');
     expect(TIMELINE_SRC).toContain('FADE_W = 28');
     expect(TIMELINE_SRC).toContain('fadeLeft');
     expect(TIMELINE_SRC).toContain('fadeRight');
     expect(TIMELINE_SRC).toContain('pointerEvents="none"');
+  });
+
+  it('aligns pill, line and dot on one x; the line runs the full height', () => {
+    // The pill used to size itself to the time string ("9:05" vs
+    // "19:22"), so its centre drifted off the line. Now one shared
+    // markerX carries pill, line and dot, the pill is a fixed size, and
+    // the line runs from the pill's bottom down past the bar.
+    expect(TIMELINE_SRC).toContain('const markerX = Math.max(');
+    expect(TIMELINE_SRC).toContain('PILL_W = 56');
+    expect(TIMELINE_SRC).toContain('PILL_H = 22');
+    expect(TIMELINE_SRC).toContain('top: PILL_H,');
+    expect(TIMELINE_SRC).toContain('bottom: -6,');
+    expect(TIMELINE_SRC).not.toContain('pillX');
+  });
+
+  it('rounds the time blocks and ticks haptically while swiping', () => {
+    expect(TIMELINE_SRC).toContain('borderRadius: 8,');
+    expect(TIMELINE_SRC).toContain('marginHorizontal: 1,');
+    expect(TIMELINE_SRC).toContain('Haptics.selectionAsync()');
+    expect(TIMELINE_SRC).toContain('onScrollBeginDrag');
+    expect(TIMELINE_SRC).toContain('Haptics.ImpactFeedbackStyle.Light');
+    expect(TIMELINE_SRC).toContain('settings.haptics');
   });
 });
 

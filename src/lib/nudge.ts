@@ -561,8 +561,12 @@ export function registerNudgeResponseListener(
   });
 }
 
-/** Fire one test nudge immediately (for Settings / debugging). */
+/** Fire one test nudge (for Settings / debugging). Scheduled 1s out
+ * through the real nudge channel — an immediate (trigger: null) nudge
+ * lands on Android's default channel, so it would play the default
+ * sound and carry no actions, and would not test the real nudge at all. */
 export async function testNudgeNow(title = 'Takt test'): Promise<string> {
+  const fireAt = new Date(Date.now() + 1000);
   return Notifications.scheduleNotificationAsync({
     content: {
       title: 'Takt test nudge',
@@ -571,6 +575,10 @@ export async function testNudgeNow(title = 'Takt test'): Promise<string> {
       categoryIdentifier: NUDGE_CATEGORY_ID,
       data: { test: true },
     },
-    trigger: null,
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DATE,
+      date: fireAt,
+      channelId: NUDGE_CHANNEL_ID,
+    },
   });
 }
