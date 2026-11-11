@@ -33,10 +33,14 @@
   (one tap back, within the toast's life), and a done block's sheet
   offers "Mark as not done" (clears the completion, nudges return).
 - Hero timeline (MiniTimeline): the WHOLE day (00:00–24:00) as a zoomed
-  strip (~1 hour per viewport), draggable to day end. The red marker is
-  FIXED at the viewport centre — the strip slides under it; the pill
-  shows the time under the marker. The only time labels are the visible
-  window's start and end (below the bar), updating as you swipe.
+  strip (~1 hour per viewport), draggable to day end. The red now-marker
+  (pill + line + dot) rides WITH the strip, pinned to the current time:
+  the strip starts centred on now, and when the user swipes the marker
+  moves with the timeline — it scrolls off-screen once now is past the
+  visible hour. The only time labels are the visible window's start and
+  end (below the bar), updating as you swipe. The strip fades to the
+  card colour at the viewport's left and right edges (28dp gradients,
+  pointerEvents none).
 - Calendar day change slides like a page turn: the grid follows the
   finger on a two-finger swipe (slides out past 60dp, snaps back under
   it), and every anchor change (buttons, date strip, Today, swipe)

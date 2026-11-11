@@ -382,7 +382,7 @@ export default function TodayScreen() {
           <Text style={styles.hoursLine}>
             {fmtHoursMin(doneMin)} of {fmtHoursMin(totalMin)}
           </Text>
-          <MiniTimeline blocks={blocks} nowMin={nowMin} categoryById={categoryById} />
+          <MiniTimeline blocks={blocks} nowMin={nowMin} categoryById={categoryById} cardColor={colors.butter} />
           {heroBlock ? (
             <>
               <View style={styles.heroDivider} />

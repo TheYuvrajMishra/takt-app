@@ -51,20 +51,22 @@ describe('hero carries the mini timeline', () => {
     expect(INDEX_SRC).toContain('fmtHoursMin(doneMin)');
   });
 
-  it('renders the timeline with a red centre marker', () => {
+  it('renders the timeline with a red now-marker', () => {
     expect(TIMELINE_SRC).toContain('NOW_RED');
     expect(TIMELINE_SRC).toContain('dayTimelineSegments');
-    expect(TIMELINE_SRC).toContain('centerPill');
-    expect(TIMELINE_SRC).toContain('centerLine');
-    expect(TIMELINE_SRC).toContain('centerDot');
+    expect(TIMELINE_SRC).toContain('nowPill');
+    expect(TIMELINE_SRC).toContain('nowLine');
+    expect(TIMELINE_SRC).toContain('nowDot');
   });
 
-  it('is a zoomed full-day strip, fixed centre marker, dynamic edge times', () => {
+  it('is a zoomed full-day strip, marker rides with now, edges fade', () => {
     // Zoomed strip (300dp/hour, about one hour per viewport) spanning
-    // the whole day so the user can swipe to day end; the red marker is
-    // fixed at the viewport centre and the strip slides under it; the
-    // only time labels are the visible window's start and end, updating
-    // from the scroll offset.
+    // the whole day so the user can swipe to day end; the strip starts
+    // centred on now, and the red marker is pinned to now inside the
+    // scroll content — it moves with the timeline and scrolls off-screen
+    // past the hour, never fixed at the viewport centre. The only time
+    // labels are the visible window's start and end, updating from the
+    // scroll offset. The strip fades to the card colour at both edges.
     expect(TIMELINE_SRC).toContain('PX_PER_HOUR = 300');
     expect(TIMELINE_SRC).toContain('DAY_MIN = 24 * 60');
     expect(TIMELINE_SRC).toContain('<ScrollView');
@@ -74,7 +76,14 @@ describe('hero carries the mini timeline', () => {
     expect(TIMELINE_SRC).toContain('edgeLabels');
     expect(TIMELINE_SRC).toContain('windowStartMin');
     expect(TIMELINE_SRC).toContain('windowEndMin');
-    expect(TIMELINE_SRC).toContain("left: '50%'");
+    expect(TIMELINE_SRC).toContain('{ left: nowX }');
+    expect(TIMELINE_SRC).toContain('{ left: pillX }');
+    expect(TIMELINE_SRC).not.toContain("left: '50%'");
+    expect(TIMELINE_SRC).toContain('LinearGradient');
+    expect(TIMELINE_SRC).toContain('FADE_W = 28');
+    expect(TIMELINE_SRC).toContain('fadeLeft');
+    expect(TIMELINE_SRC).toContain('fadeRight');
+    expect(TIMELINE_SRC).toContain('pointerEvents="none"');
   });
 });
 
