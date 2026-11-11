@@ -229,3 +229,12 @@
   sound is deleted + recreated with the alarm on init — only that case
   migrates, so a channel that already has a custom sound, or one the
   user silenced, is left alone. Guarded by `nudge.test.ts`.
+
+- Closed-app nudges: doReschedule schedules the fresh plan BEFORE the slow
+  fetch of all scheduled notifications (the plan is sorted by fire time, so
+  the soonest nudge lands first). The old order fetched first, so closing
+  the app a second after creating a task left the new block with no nudge.
+  A block whose time window is active but the user never pressed Start
+  shows "Now" (butter), not "In progress" — only an actual Start is
+  progress. Onboarding is 6 steps; the "Build your first day" sandbox is
+  removed.
