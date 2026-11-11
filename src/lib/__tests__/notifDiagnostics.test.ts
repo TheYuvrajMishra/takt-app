@@ -10,13 +10,18 @@ import SETTINGS_SRC from '../../app/settings.tsx?raw';
 import { describe, expect, it } from 'vitest';
 
 describe('notification diagnostics', () => {
-  it('exposes permission, channel and scheduled nudges for Settings', () => {
+  it('exposes permission, exact alarms, channel and scheduled nudges for Settings', () => {
     expect(NUDGE_SRC).toContain('export async function getNotificationStatus');
     expect(NUDGE_SRC).toContain('permission: perm.status');
+    expect(NUDGE_SRC).toContain('getExactAlarmPermissionsAsync');
+    expect(NUDGE_SRC).toContain('exactAlarm');
     expect(NUDGE_SRC).toContain('scheduledCount');
     expect(NUDGE_SRC).toContain('nextNudge');
     expect(SETTINGS_SRC).toContain('getNotificationStatus');
     expect(SETTINGS_SRC).toContain('Notifications are off, so no nudge can fire');
+    expect(SETTINGS_SRC).toContain('Exact alarms:');
+    expect(SETTINGS_SRC).toContain('Without exact alarms, nudges arrive minutes late');
+    expect(SETTINGS_SRC).toContain('Allow exact alarms');
     expect(SETTINGS_SRC).toContain('Scheduled nudges:');
     expect(SETTINGS_SRC).toContain('Next nudge:');
     expect(SETTINGS_SRC).toContain('Allow notifications');

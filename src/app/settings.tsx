@@ -9,6 +9,7 @@ import { CategoryIcon } from '../components/CategoryIcon';
 import { mergeBackupSettings } from '../lib/backup';
 import {
   getNotificationStatus,
+  requestExactAlarmPermissions,
   requestNudgePermissions,
   reschedule,
   testNudgeNow,
@@ -259,6 +260,15 @@ export default function SettingsScreen() {
           </Text>
         ) : null}
         <Text style={styles.rowLabel}>
+          Exact alarms: {notifStatus ? notifStatus.exactAlarm : 'checking…'}
+        </Text>
+        {notifStatus?.exactAlarm !== 'granted' ? (
+          <Text style={styles.hint}>
+            Without exact alarms, nudges arrive minutes late (Android 14
+            denies them by default). Allow them so a nudge fires on time.
+          </Text>
+        ) : null}
+        <Text style={styles.rowLabel}>
           Channel: {notifStatus ? (notifStatus.channelExists ? `yes${notifStatus.channelSound ? ` (${notifStatus.channelSound})` : ' (silenced)'}` : 'missing') : 'checking…'}
         </Text>
         <Text style={styles.rowLabel}>
@@ -297,6 +307,24 @@ export default function SettingsScreen() {
         <Pressable style={styles.testButton} onPress={refreshNotifStatus}>
           <Text style={styles.testButtonText}>Refresh status</Text>
         </Pressable>
+        {notifStatus?.exactAlarm !== 'granted' ? (
+          <Pressable
+            style={styles.testButton}
+            onPress={() => {
+              void (async () => {
+                await requestExactAlarmPermissions();
+                // The system settings page may restart the app when the
+                // permission is revoked; re-read the status on return and
+                // reschedule so pending nudges use exact alarms.
+                await reschedule();
+                refreshNotifStatus();
+                showToast('Exact alarms updated — nudges rescheduled.');
+              })().catch(() => showToast('Could not open exact alarm settings.'));
+            }}
+          >
+            <Text style={styles.testButtonText}>Allow exact alarms</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       <Text style={styles.sectionTitle}>Nudges</Text>

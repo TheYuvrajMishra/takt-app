@@ -321,6 +321,17 @@ export async function requestNudgePermissions(): Promise<boolean> {
 }
 
 /**
+ * Opens the system settings screen where the user can allow exact
+ * alarms, and resolves when they return to the app. Without exact
+ * alarms, scheduled notifications arrive at an approximate time —
+ * minutes late on Android 14+, which denies them by default. The app
+ * already declares SCHEDULE_EXACT_ALARM; this is the grant step.
+ */
+export async function requestExactAlarmPermissions(): Promise<void> {
+  await Notifications.requestExactAlarmPermissionsAsync();
+}
+
+/**
  * One-time setup for the app root: channel + category, then wire store
  * changes to reschedule() and schedule the first window.
  * Safe to call repeatedly; returns whether notifications are granted.
@@ -579,6 +590,10 @@ export interface NotificationStatus {
   channelExists: boolean;
   /** The channel's sound, if the channel exists (null = silenced). */
   channelSound: string | null;
+  /** Whether exact alarms are allowed. Without this, scheduled
+   * notifications arrive at an approximate time (minutes late on
+   * Android 14+, which denies it by default for new installs). */
+  exactAlarm: string;
   /** How many Takt nudges are currently scheduled on the device. */
   scheduledCount: number;
   /** The next scheduled nudge, if any. */
@@ -587,6 +602,13 @@ export interface NotificationStatus {
 
 export async function getNotificationStatus(): Promise<NotificationStatus> {
   const perm = await Notifications.getPermissionsAsync();
+  let exactAlarm = 'granted';
+  try {
+    const exact = await Notifications.getExactAlarmPermissionsAsync();
+    exactAlarm = exact.status;
+  } catch {
+    // Below Android 12 there is no exact-alarm permission.
+  }
   let channelExists = false;
   let channelSound: string | null = null;
   try {
@@ -618,6 +640,7 @@ export async function getNotificationStatus(): Promise<NotificationStatus> {
     permission: perm.status,
     channelExists,
     channelSound,
+    exactAlarm,
     scheduledCount: takt.length,
     nextNudge:
       next && nextFireAt

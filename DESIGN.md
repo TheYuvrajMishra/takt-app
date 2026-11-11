@@ -246,3 +246,12 @@
   at all" is now visible instead of guessed at. The section has an
   "Allow notifications" button (re-prompts, or opens system settings
   when already denied) and a Refresh status button.
+
+- Exact alarms (the late-nudge fix): a nudge was arriving 8–10 min after
+  the deadline. Without the exact-alarm permission, scheduled
+  notifications arrive at an approximate time — Android 14+ denies
+  exact alarms by default for new installs even though the app declares
+  SCHEDULE_EXACT_ALARM. Settings → Notifications now shows the exact
+  alarm status and has an "Allow exact alarms" button (opens the system
+  settings page, then reschedules). The diagnostics also cover the
+  notification permission, channel, scheduled count and next nudge.
