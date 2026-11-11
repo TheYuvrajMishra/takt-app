@@ -205,56 +205,62 @@ function TabBar({ state, navigateToTab }: TabBarProps) {
 
   return (
     <View style={[styles.barWrap, { bottom: insets.bottom + 12 }]}>
-      {/* Swipe-up cue: a small arrow above the bar (tap it to open too). */}
-      {hasDock && !dockExpanded ? (
-        <Pressable
-          onPress={() => setDockExpanded(true)}
-          accessibilityRole="button"
-          accessibilityLabel="Open categories"
-          hitSlop={12}
-          style={styles.arrowHit}
-        >
-          <Reanimated.View style={[styles.arrow, arrowStyle]}>
-            <Svg width={18} height={18} viewBox="0 0 24 24">
-              <Line x1="5" y1="15" x2="12" y2="8" stroke={colors.carbon} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-              <Line x1="12" y1="8" x2="19" y2="15" stroke={colors.carbon} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-            </Svg>
-          </Reanimated.View>
-        </Pressable>
-      ) : null}
+      {/* The swipe-up Pan wraps the arrow AND the bar: a swipe starting
+          on the arrow opens the drawer, and a tap on it still works —
+          the Pan only activates after 12dp of upward movement, so a tap
+          never trips it (same as the tab buttons inside the bar). */}
       <GestureDetector gesture={swipeUp}>
-        <View
-          style={styles.bar}
-          onLayout={(e) => reportNavbarHeight(e.nativeEvent.layout.height)}
-        >
-          <Reanimated.View style={[styles.pill, pillStyle]} pointerEvents="none" />
-          {state.routes.map((route, index) => {
-            const isActive = state.index === index;
-            const label = TAB_LABELS[route.name] ?? route.name;
-            const icon = TAB_ICONS[route.name] ?? 'today';
-            return (
-              <TabButton
-                key={route.key}
-                label={label}
-                icon={icon}
-                isActive={isActive}
-                onPress={() => {
-                  if (hapticsEnabled) lightHaptic();
-                  navigateToTab(route.key);
-                }}
-                onLayout={(layout) => {
-                  layouts.current[index] = layout;
-                  // The active tab may have been measured before the effect
-                  // above ran; place the pill as soon as we know it.
-                  if (index === state.index && !pillReady.current) {
-                    pillX.value = layout.x;
-                    pillW.value = layout.width;
-                    pillReady.current = true;
-                  }
-                }}
-              />
-            );
-          })}
+        <View style={styles.swipeZone}>
+          {/* Swipe-up cue: a small arrow above the bar (tap it to open too). */}
+          {hasDock && !dockExpanded ? (
+            <Pressable
+              onPress={() => setDockExpanded(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Open categories"
+              hitSlop={12}
+              style={styles.arrowHit}
+            >
+              <Reanimated.View style={[styles.arrow, arrowStyle]}>
+                <Svg width={18} height={18} viewBox="0 0 24 24">
+                  <Line x1="5" y1="15" x2="12" y2="8" stroke={colors.carbon} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                  <Line x1="12" y1="8" x2="19" y2="15" stroke={colors.carbon} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                </Svg>
+              </Reanimated.View>
+            </Pressable>
+          ) : null}
+          <View
+            style={styles.bar}
+            onLayout={(e) => reportNavbarHeight(e.nativeEvent.layout.height)}
+          >
+            <Reanimated.View style={[styles.pill, pillStyle]} pointerEvents="none" />
+            {state.routes.map((route, index) => {
+              const isActive = state.index === index;
+              const label = TAB_LABELS[route.name] ?? route.name;
+              const icon = TAB_ICONS[route.name] ?? 'today';
+              return (
+                <TabButton
+                  key={route.key}
+                  label={label}
+                  icon={icon}
+                  isActive={isActive}
+                  onPress={() => {
+                    if (hapticsEnabled) lightHaptic();
+                    navigateToTab(route.key);
+                  }}
+                  onLayout={(layout) => {
+                    layouts.current[index] = layout;
+                    // The active tab may have been measured before the effect
+                    // above ran; place the pill as soon as we know it.
+                    if (index === state.index && !pillReady.current) {
+                      pillX.value = layout.x;
+                      pillW.value = layout.width;
+                      pillReady.current = true;
+                    }
+                  }}
+                />
+              );
+            })}
+          </View>
         </View>
       </GestureDetector>
     </View>
@@ -411,6 +417,11 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     right: 0,
+    alignItems: 'center',
+  },
+  // The swipe-up zone: arrow + bar stacked with the same 6dp gap the
+  // barWrap used to provide, so the layout is unchanged.
+  swipeZone: {
     alignItems: 'center',
     gap: 6,
   },

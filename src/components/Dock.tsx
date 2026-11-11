@@ -470,6 +470,9 @@ const styles = StyleSheet.create({
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+    // Centre each wrapped row of pills: without this the last row sits
+    // left-aligned against the edge, which reads as a broken layout.
+    justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 12,
     paddingBottom: 10,
