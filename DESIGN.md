@@ -255,3 +255,11 @@
   alarm status and has an "Allow exact alarms" button (opens the system
   settings page, then reschedules). The diagnostics also cover the
   notification permission, channel, scheduled count and next nudge.
+
+- 'From today onwards' means today: addBlock's 'onwards'/'weekday'
+  scope used to set the new template version's effectiveFrom to the
+  drop date, so dropping a task on Sat 14 Nov and picking "From today
+  onwards" skipped today (12th) and tomorrow (13th) entirely — the
+  task only appeared from the 14th. The version now takes effect from
+  the earliest of the template's current start, the drop date, and
+  today, so the label's promise holds.

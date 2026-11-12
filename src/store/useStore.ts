@@ -705,11 +705,17 @@ export const useStore = create<TaktState>()((set, get) => {
           doNotNudge,
           weekdays: scope === 'onwards' ? [0, 1, 2, 3, 4, 5, 6] : [weekday],
         };
+        // 'onwards'/'weekday' from a future date must still apply from
+        // today: the scope label promises "from today onwards", so the new
+        // version takes effect from the earliest of the template's current
+        // start, the drop date, and today. Dropping on Sat 14th and
+        // picking "from today onwards" used to start the task on the 14th
+        // and skip today (12th) and tomorrow (13th) entirely.
+        const todayKey = dateKey(new Date());
+        const effectiveFrom = [template.effectiveFrom, date, todayKey].sort()[0];
         const next: RoutineTemplate = {
           ...template,
-          // 'onwards'/'weekday' from a past date must apply from that date.
-          effectiveFrom:
-            template.effectiveFrom > date ? date : template.effectiveFrom,
+          effectiveFrom,
           blocks: [...template.blocks, templateBlock],
         };
         await commitTemplate(next);
