@@ -452,6 +452,14 @@ async function doReschedule(): Promise<number> {
         type: Notifications.SchedulableTriggerInputTypes.DATE,
         date: item.fireAt,
         channelId: NUDGE_CHANNEL_ID,
+        // 'alarmClock' (setAlarmClock) is NOT deferred for battery
+        // optimization; 'bestEffort' (the default, setExactAndAllowWhileIdle)
+        // is deferred by minutes on some OEM builds (HyperOS), so every
+        // nudge for a task arrived in one batch ~45 min late instead of
+        // every 7 min from the start time. Nudges are time-critical
+        // alarms, so alarmClock is the right delivery. It falls back to
+        // bestEffort without the exact-alarm permission — see Settings.
+        delivery: 'alarmClock',
       },
     });
   }
@@ -662,6 +670,8 @@ export async function testNudgeNow(title = 'Takt test'): Promise<string> {
       type: Notifications.SchedulableTriggerInputTypes.DATE,
       date: fireAt,
       channelId: NUDGE_CHANNEL_ID,
+      // Same as the real nudges: alarmClock so HyperOS cannot defer it.
+      delivery: 'alarmClock',
     },
   });
 }

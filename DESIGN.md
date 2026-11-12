@@ -263,3 +263,12 @@
   task only appeared from the 14th. The version now takes effect from
   the earliest of the template's current start, the drop date, and
   today, so the label's promise holds.
+
+- Nudge delivery is 'alarmClock', not 'bestEffort': every nudge for a
+  10:00 task arrived in one batch at ~10:45 instead of every 7 min
+  from 10:00. 'bestEffort' (setExactAndAllowWhileIdle, the default)
+  is deferred by minutes on some OEM builds (HyperOS); 'alarmClock'
+  (setAlarmClock) is NOT deferred for battery optimization. Nudges
+  are time-critical alarms, so alarmClock is the right delivery. It
+  falls back to bestEffort without the exact-alarm permission, so
+  exact alarms must still be granted (Settings → Notifications).
