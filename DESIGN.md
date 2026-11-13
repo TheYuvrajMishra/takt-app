@@ -220,7 +220,7 @@
 ## Nudge alarm sound
 - Nudges (a block starting = "up next", a block still open past its end
   = "missed") play a real alarm tone, not the default ping:
-  `assets/sounds/alarm.wav` (generated two-tone beeps, see
+  `assets/sounds/alarm.wav` (generated two-tone beeps. see
   `scripts/gen-alarm-sound.mjs`), bundled by the expo-notifications
   plugin (`app.json` `sounds` — prebuild copies it to `res/raw`).
 - The channel (`takt-nudges`) carries the sound on Android and each
